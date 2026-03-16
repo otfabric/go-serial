@@ -1,4 +1,4 @@
-// +build freebsd netbsd
+//go:build freebsd || netbsd
 
 package serial
 
@@ -37,6 +37,13 @@ var charSizes = map[int]uint32{
 	8: syscall.CS8,
 }
 
+func init() {
+	isBaudRateSupported = func(b BaudRate) bool {
+		_, ok := baudRates[int(b)]
+		return ok
+	}
+}
+
 // syscallSelect is a wrapper for syscall.Select that only returns error.
 func syscallSelect(n int, r *syscall.FdSet, w *syscall.FdSet, e *syscall.FdSet, tv *syscall.Timeval) error {
 	return syscall.Select(n, r, w, e, tv)
@@ -52,7 +59,7 @@ func tcsetattr(fd int, termios *syscall.Termios) (err error) {
 		return
 	}
 	if r != 0 {
-		err = fmt.Errorf("tcsetattr failed %v", r)
+		err = fmt.Errorf("ioctl tcsetattr failed: %v", r)
 	}
 	return
 }
@@ -67,7 +74,7 @@ func tcgetattr(fd int, termios *syscall.Termios) (err error) {
 		return
 	}
 	if r != 0 {
-		err = fmt.Errorf("tcgetattr failed %v", r)
+		err = fmt.Errorf("ioctl tcgetattr failed: %v", r)
 		return
 	}
 	return

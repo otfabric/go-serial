@@ -1,3 +1,3 @@
-module github.com/gofabric/go-serial
+module github.com/otfabric/go-serial
 
-go 1.16
+go 1.20

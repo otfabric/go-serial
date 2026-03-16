@@ -7,7 +7,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/gofabric/go-serial"
+	"github.com/otfabric/go-serial"
 )
 
 var (
@@ -29,11 +29,27 @@ func main() {
 	flag.StringVar(&message, "m", "serial", "message")
 	flag.Parse()
 
+	parityVal, err := serial.ParseParity(parity)
+	if err != nil {
+		log.Fatal(err)
+	}
+	dataBitsVal, err := serial.ParseDataBits(databits)
+	if err != nil {
+		log.Fatal(err)
+	}
+	stopBitsVal, err := serial.ParseStopBits(stopbits)
+	if err != nil {
+		log.Fatal(err)
+	}
+	baudRateVal, err := serial.ParseBaudRate(baudrate)
+	if err != nil {
+		log.Fatal(err)
+	}
 	config := serial.DefaultConfig(address)
-	config.BaudRate = baudrate
-	config.DataBits = databits
-	config.StopBits = stopbits
-	config.Parity = parity
+	config.BaudRate = baudRateVal
+	config.DataBits = dataBitsVal
+	config.StopBits = stopBitsVal
+	config.Parity = parityVal
 	config.Timeout = 30 * time.Second
 	log.Printf("connecting %+v", config)
 	port, err := serial.Open(&config)
@@ -42,11 +58,9 @@ func main() {
 	}
 	log.Println("connected")
 	defer func() {
-		err := port.Close()
-		if err != nil {
-			log.Fatal(err)
+		if err := port.Close(); err != nil {
+			log.Printf("close: %v", err)
 		}
-		log.Println("closed")
 	}()
 
 	if _, err = port.Write([]byte(message)); err != nil {

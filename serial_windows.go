@@ -1,6 +1,9 @@
+//go:build windows
+
 package serial
 
 import (
+	"errors"
 	"fmt"
 	"syscall"
 )
@@ -12,15 +15,26 @@ type port struct {
 	oldTimeouts c_COMMTIMEOUTS
 }
 
-// New allocates and returns a new serial port controller.
-func New() Port {
-	return &port{
-		handle: syscall.InvalidHandle,
-	}
+// newPort allocates a new serial port (internal use).
+func newPort() *port {
+	return &port{handle: syscall.InvalidHandle}
 }
 
-// Open connects to the given serial port.
-func (p *port) Open(c *Config) (err error) {
+func init() {
+	openPort = func(c *Config) (Port, error) {
+		p := newPort()
+		if err := p.open(c); err != nil {
+			return nil, err
+		}
+		return p, nil
+	}
+	// Windows: any positive baud is passed to the driver; actual support is driver-dependent
+	// (unlike POSIX which uses fixed baud tables per platform).
+	isBaudRateSupported = func(b BaudRate) bool { return b > 0 }
+}
+
+// open connects to the given serial port (internal use).
+func (p *port) open(c *Config) (err error) {
 	p.handle, err = newHandle(c)
 	if err != nil {
 		return
@@ -41,68 +55,55 @@ func (p *port) Open(c *Config) (err error) {
 
 func (p *port) Close() (err error) {
 	if p.handle == syscall.InvalidHandle {
-		return
+		return nil
 	}
 	err1 := SetCommTimeouts(p.handle, &p.oldTimeouts)
 	err2 := SetCommState(p.handle, &p.oldDCB)
-	err = syscall.CloseHandle(p.handle)
-	if err == nil {
-		if err1 == nil {
-			err = err2
-		} else {
-			err = err1
-		}
-	}
+	err3 := syscall.CloseHandle(p.handle)
 	p.handle = syscall.InvalidHandle
-	return
+	return errors.Join(err1, err2, err3)
 }
 
-// Read reads from serial port.
-// It is blocked until data received or timeout after p.timeout.
+// Read reads from the serial port. It blocks until data is available or the configured timeout expires.
 func (p *port) Read(b []byte) (n int, err error) {
 	var done uint32
 	if err = syscall.ReadFile(p.handle, b, &done, nil); err != nil {
-		return
+		return 0, fmt.Errorf("serial: read: %w", err)
 	}
 	if done == 0 {
-		err = ErrTimeout
-		return
+		return 0, ErrTimeout
 	}
-	n = int(done)
-	return
+	return int(done), nil
 }
 
 // Write writes data to the serial port.
 func (p *port) Write(b []byte) (n int, err error) {
 	var done uint32
 	if err = syscall.WriteFile(p.handle, b, &done, nil); err != nil {
-		return
+		return 0, fmt.Errorf("serial: write: %w", err)
 	}
-	n = int(done)
-	return
+	return int(done), nil
 }
 
 func (p *port) setTimeouts(c *Config) error {
 	var timeouts c_COMMTIMEOUTS
 	// Read and write timeout
 	if c.Timeout > 0 {
-		timeout := toDWORD(int(c.Timeout.Nanoseconds() / 1E6))
+		timeout := toDWORD(int(c.Timeout.Nanoseconds() / 1e6))
 		// wait until a byte arrived or time out
 		timeouts.ReadIntervalTimeout = c_MAXDWORD
 		timeouts.ReadTotalTimeoutMultiplier = c_MAXDWORD
 		timeouts.ReadTotalTimeoutConstant = timeout
 		timeouts.WriteTotalTimeoutConstant = timeout
 	}
-	err := GetCommTimeouts(p.handle, &p.oldTimeouts)
-	if err != nil {
-		return err
+	if err := GetCommTimeouts(p.handle, &p.oldTimeouts); err != nil {
+		return fmt.Errorf("serial: get comm timeouts: %w", err)
 	}
-	err = SetCommTimeouts(p.handle, &timeouts)
-	if err != nil {
-		// reset
-		SetCommTimeouts(p.handle, &p.oldTimeouts)
+	if err := SetCommTimeouts(p.handle, &timeouts); err != nil {
+		_ = SetCommTimeouts(p.handle, &p.oldTimeouts)
+		return fmt.Errorf("serial: set comm timeouts: %w", err)
 	}
-	return err
+	return nil
 }
 
 func (p *port) setSerialConfig(c *Config) error {
@@ -110,60 +111,56 @@ func (p *port) setSerialConfig(c *Config) error {
 	if c.BaudRate == 0 {
 		dcb.BaudRate = 9600
 	} else {
-		dcb.BaudRate = toDWORD(c.BaudRate)
+		dcb.BaudRate = toDWORD(int(c.BaudRate))
 	}
-	// Data bits
 	if c.DataBits == 0 {
 		dcb.ByteSize = 8
 	} else {
-		dcb.ByteSize = toBYTE(c.DataBits)
+		dcb.ByteSize = toBYTE(int(c.DataBits))
 	}
-	// Stop bits
 	switch c.StopBits {
-	case 0, 1:
-		// Default is one stop bit.
+	case 0, StopBits1:
 		dcb.StopBits = c_ONESTOPBIT
-	case 2:
+	case StopBits2:
 		dcb.StopBits = c_TWOSTOPBITS
 	default:
-		return fmt.Errorf("serial: unsupported stop bits %v", c.StopBits)
+		return fmt.Errorf("serial: unsupported stop bits %d: %w", c.StopBits, ErrInvalidConfig)
 	}
-	// Parity (empty string = no parity, generic default)
 	switch c.Parity {
-	case "":
+	case "", ParityNone:
 		dcb.Parity = c_NOPARITY
-	case "E":
+	case ParityEven:
 		dcb.Parity = c_EVENPARITY
 		dcb.Pad_cgo_0[0] |= 0x02 // fParity
-	case "O":
+	case ParityOdd:
 		dcb.Parity = c_ODDPARITY
 		dcb.Pad_cgo_0[0] |= 0x02 // fParity
-	case "N":
-		dcb.Parity = c_NOPARITY
 	default:
-		return fmt.Errorf("serial: unsupported parity %v", c.Parity)
+		return fmt.Errorf("serial: unsupported parity %q: %w", c.Parity, ErrInvalidConfig)
 	}
 	dcb.Pad_cgo_0[0] |= 0x01 // fBinary
 
-	err := GetCommState(p.handle, &p.oldDCB)
-	if err != nil {
-		return err
+	if err := GetCommState(p.handle, &p.oldDCB); err != nil {
+		return fmt.Errorf("serial: get comm state: %w", err)
 	}
-	err = SetCommState(p.handle, &dcb)
-	if err != nil {
-		SetCommState(p.handle, &p.oldDCB)
+	if err := SetCommState(p.handle, &dcb); err != nil {
+		_ = SetCommState(p.handle, &p.oldDCB)
+		return fmt.Errorf("serial: set comm state: %w", err)
 	}
-	return err
+	return nil
 }
 
 func newHandle(c *Config) (handle syscall.Handle, err error) {
 	handle, err = syscall.CreateFile(
 		syscall.StringToUTF16Ptr(c.Address),
 		syscall.GENERIC_READ|syscall.GENERIC_WRITE,
-		0,   // mode
-		nil, // security
+		0,                     // mode
+		nil,                   // security
 		syscall.OPEN_EXISTING, // create mode
-		0, // attributes
-		0) // templates
-	return
+		0,                     // attributes
+		0)                     // templates
+	if err != nil {
+		return 0, fmt.Errorf("serial: open %s: %w", c.Address, err)
+	}
+	return handle, nil
 }

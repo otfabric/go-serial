@@ -1,76 +1,50 @@
 /*
-Package serial provides a cross-platform serial reader and writer.
+Package serial provides a cross-platform library for opening, configuring, and
+using serial ports (UART, RS-232, RS-485). It is transport-focused and
+protocol-neutral. For Modbus RTU serial presets, see the serial/modbus subpackage.
 */
 package serial
 
 import (
 	"errors"
+	"fmt"
 	"io"
-	"time"
 )
 
-var (
-	// ErrTimeout is occurred when timing out.
-	ErrTimeout = errors.New("serial: timeout")
-)
-
-// Config is common configuration for serial port.
-type Config struct {
-	// Device path (e.g. /dev/ttyUSB0 on Unix, COM1 on Windows).
-	Address string
-	// Baud rate (e.g. 9600, 115200). Zero uses the default from DefaultConfig.
-	BaudRate int
-	// Data bits: 5, 6, 7 or 8. Zero means 8.
-	DataBits int
-	// Stop bits: 1 or 2. Zero means 1.
-	StopBits int
-	// Parity: N - None, E - Even, O - Odd. Empty uses the default from DefaultConfig.
-	Parity string
-	// Read/Write timeout. Zero means no timeout.
-	Timeout time.Duration
-	// Configuration related to RS485 (optional).
-	RS485 RS485Config
-}
-
-// DefaultConfig returns a generic serial config for the given address.
-// Use this for protocol-neutral UART/RS-232/RS-485: 9600 8N1.
-// For Modbus RTU defaults, use the serial/modbus package instead.
-func DefaultConfig(address string) Config {
-	return Config{
-		Address:  address,
-		BaudRate: 9600,
-		DataBits: 8,
-		StopBits: 1,
-		Parity:   "N",
-	}
-}
-
-// RS485Config is platform-independent RS485 options. Ignored unless Enabled is true.
-type RS485Config struct {
-	// Enable RS485 support
-	Enabled bool
-	// Delay RTS prior to send
-	DelayRtsBeforeSend time.Duration
-	// Delay RTS after send
-	DelayRtsAfterSend time.Duration
-	// Set RTS high during send
-	RtsHighDuringSend bool
-	// Set RTS high after send
-	RtsHighAfterSend bool
-	// Rx during Tx
-	RxDuringTx bool
-}
-
-// Port is the interface for controlling serial port.
+// Port represents an opened serial port returned by Open.
 type Port interface {
 	io.ReadWriteCloser
-	// Connect connects to the serial port.
-	Open(*Config) error
 }
 
-// Open opens a serial port.
-func Open(c *Config) (p Port, err error) {
-	p = New()
-	err = p.Open(c)
-	return
+// openPort is set by platform-specific files (serial_posix.go, serial_windows.go).
+var openPort func(*Config) (Port, error)
+
+// isBaudRateSupported is set by each platform to validate baud rate before open. If nil, no check.
+var isBaudRateSupported func(BaudRate) bool
+
+// Open opens a serial port with the given config. It validates and normalizes the config,
+// then opens the device. Invalid config returns an error wrapping ErrInvalidConfig.
+// Unsupported platform (e.g. unsupported OS) returns ErrUnsupportedPlatform.
+func Open(c *Config) (Port, error) {
+	if openPort == nil {
+		return nil, fmt.Errorf("serial: open: %w", ErrUnsupportedPlatform)
+	}
+	if err := ValidateConfig(c); err != nil {
+		return nil, err
+	}
+	cfg := normalizeConfig(c)
+	if isBaudRateSupported != nil && !isBaudRateSupported(cfg.BaudRate) {
+		return nil, &ConfigError{Field: "BaudRate", Value: cfg.BaudRate, Reason: "unsupported baud rate for this platform", Err: ErrInvalidConfig}
+	}
+	return openPort(&cfg)
+}
+
+// IsUnsupportedBaudRate reports whether err indicates the baud rate is not supported on this platform.
+// It is true when Open returns a ConfigError with Field "BaudRate" and reason "unsupported baud rate for this platform".
+func IsUnsupportedBaudRate(err error) bool {
+	var cfgErr *ConfigError
+	if !errors.As(err, &cfgErr) {
+		return false
+	}
+	return cfgErr.Field == "BaudRate" && cfgErr.Reason == "unsupported baud rate for this platform"
 }

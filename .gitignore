@@ -1,0 +1,18 @@
+# Binaries
+/bin/
+/dist/
+
+# Test / fuzz
+*.test
+*.out
+
+# Coverage reports
+coverage.*
+cover.*
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store

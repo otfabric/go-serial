@@ -1,5 +1,4 @@
-// +build linux
-// +build mips mipsle mips64 mips64le
+//go:build linux && (mips || mipsle || mips64 || mips64le)
 
 package serial
 

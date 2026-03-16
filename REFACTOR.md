@@ -1,195 +1,156 @@
-go-serial Requirements
+Looks solid. I would only make a few focused improvements now.
 
-Purpose
+Highest-value feedback
 
-go-serial must provide a small, reliable, cross-platform Go library for opening, configuring, reading from, writing to, and closing serial ports. The library must remain transport-focused and protocol-neutral, while making it easy for higher-layer protocols such as Modbus RTU to supply their own presets.
+1. CI: add go test -shuffle=on
 
-Product Goals
+This catches hidden test coupling for almost no cost.
 
-The library must:
-	•	expose a clean and idiomatic Go API
-	•	work across supported desktop/server operating systems
-	•	support common UART and RS-485 use cases
-	•	avoid protocol-specific behavior in the root package
-	•	provide predictable configuration defaults
-	•	return clear, inspectable errors
-	•	avoid hidden logging and other side effects
-	•	be thoroughly covered by tests that focus on validation and public API behavior
-	•	include concise, professional documentation and examples
+- name: Test
+  run: go test -shuffle=on ./...
 
-Non-Goals
+Keep race separate as you have it.
 
-The library must not:
-	•	implement Modbus framing, CRC, timing, or master/slave logic
-	•	become a generic terminal emulator or feature-heavy serial toolkit
-	•	expose protocol-specific assumptions in the root package
-	•	log to stdout/stderr from the library itself
-	•	require users to understand platform internals to use the common API
+⸻
 
-API Requirements
+2. CI: add OS coverage, not just Go-version coverage
 
-Package structure
+For a cross-platform serial library, OS matrix is more valuable than testing many Go versions on only Ubuntu.
 
-The repository must keep:
-	•	root package serial for generic serial transport
-	•	subpackage modbus for Modbus RTU-oriented presets only
+A better balance would be:
+	•	Go 1.20 and latest
+	•	Linux, Windows, macOS
 
-The root package must feel protocol-neutral.
+For example:
+	•	full test matrix on Linux/macOS/Windows with one current Go
+	•	keep one extra Linux job on 1.20 for minimum-version coverage
 
-Public types
+That gives much better confidence for this package than 1.20/1.22/1.23 on Ubuntu only.
 
-The public API should remain small and explicit.
+⸻
 
-Required public surface:
-	•	type Config
-	•	type RS485Config
-	•	type Port interface
-	•	func Open(*Config) (Port, error)
-	•	func New() Port
-	•	func DefaultConfig(address string) Config
+3. CI: avoid go mod tidy on every matrix leg
 
-Required Modbus preset surface:
-	•	func modbus.DefaultRTUConfig(address string) serial.Config
+It is redundant and slows things down. Run it once in a dedicated job, or only on one matrix leg.
 
-Configuration quality
+Same for coverage upload: you already do that only once, which is good.
 
-Config must be well documented and validated.
+⸻
 
-Validation must cover at least:
-	•	empty address
-	•	unsupported baud rate when the implementation only supports fixed rates
-	•	unsupported data bits
-	•	unsupported stop bits
-	•	unsupported parity values
-	•	invalid negative timeout values
-	•	invalid negative RS-485 delays
+4. CI: cache Go modules/build cache explicitly
 
-The package should expose typed validation errors or sentinel errors where that improves errors.Is / errors.As behavior.
+actions/setup-go helps, but I would ensure cache is enabled clearly.
 
-Type quality
+with:
+  go-version: ${{ matrix.go-version }}
+  cache: true
 
-The API should prefer strong types where they materially improve correctness and readability.
+Small, but worthwhile.
 
-Recommended improvements:
-	•	replace string parity values with a dedicated Parity type
-	•	optionally replace raw stop-bit integers with a dedicated StopBits type if this improves clarity without making the API heavy
-	•	keep zero-value behavior explicit and documented
+⸻
 
-If strong types are introduced, maintain ergonomic defaults and simple examples.
+5. README: fix examples to be copy-paste complete
 
-Error handling
+A few snippets use errors, log, or buf without showing the full surrounding imports/definitions. For quality, make every README snippet independently understandable.
 
-Errors must be suitable for inspection and composition.
+Especially:
+	•	timeout example
+	•	config validation example
 
-Requirements:
-	•	preserve ErrTimeout as a sentinel timeout error
-	•	expose validation-related sentinels such as ErrInvalidConfig when appropriate
-	•	wrap underlying OS/syscall failures with %w
-	•	keep user-facing error text concise and specific
-	•	avoid vague messages such as “unknown error” unless no better signal exists
+⸻
 
-Where appropriate, the package should implement small helper error types, for example field-validation errors, if this materially improves debuggability.
+Code/doc polish
 
-Logging
+6. DefaultModbusRTUConfig alias
 
-The library must not produce log output during normal operation or cleanup.
+This is okay, but I would stop here. Do not add more aliases. One discoverability alias is enough.
 
-Requirements:
-	•	remove package-level use of log.Printf
-	•	never write directly to stdout/stderr from library code
-	•	return errors instead of logging whenever possible
-	•	if a best-effort cleanup cannot be surfaced directly, prefer silent cleanup over surprising logs from library internals
+7. REFACTOR.md
 
-The example program may log because it is an application, not a library.
+Delete it if it is empty. Empty repo files make the project feel unfinished.
 
-Documentation
+8. Add example tests in _test.go
 
-Documentation must be professional and concise.
+This is one of the best remaining doc-quality moves.
 
-Required documentation:
-	•	package-level docs for serial
-	•	package-level docs for modbus
-	•	doc comments for all exported identifiers
-	•	README sections for purpose, installation, generic usage, Modbus preset usage, RS-485 notes, timeout behavior, supported platforms, and non-goals
-	•	migration note from goburrow/serial to gofabric/go-serial
+Useful examples:
+	•	ExampleDefaultConfig
+	•	ExampleParseParity
+	•	ExampleConfig_Validate
+	•	Example_modbus_DefaultRTUConfig
 
-Examples must show:
-	•	generic usage with serial.DefaultConfig
-	•	Modbus-oriented usage with modbus.DefaultRTUConfig
-	•	explicit timeout handling with errors.Is(err, serial.ErrTimeout)
+Keep them hardware-free.
 
-Implementation Requirements
+9. Add a tiny package doc/example for Normalized()
 
-Configuration validation
+Since you exposed it, make sure it is actually discoverable and justified.
 
-Validation should happen before opening the device whenever possible.
+⸻
 
-A dedicated Validate function or Config.Validate() method is recommended if it improves API clarity.
+Tests I would still want
 
-Default behavior
+10. Add focused tests for these exact behaviors
 
-The generic root package defaults must remain neutral.
+If not already present, these are the last important ones:
+	•	Config.Normalized()
+	•	IsUnsupportedBaudRate
+	•	errors.Is(err, ErrUnsupportedPlatform)
+	•	zero-value string/marshal behavior for typed fields
+	•	nil receiver UnmarshalText guards
+	•	ConfigError.Error() formatting
 
-Generic defaults should remain effectively equivalent to:
-	•	9600 baud
-	•	8 data bits
-	•	1 stop bit
-	•	no parity
+That is enough. No need to overbuild the test suite.
 
-Modbus defaults must remain isolated to the modbus subpackage.
+⸻
 
-POSIX behavior
+One suggested CI shape
 
-POSIX code must:
-	•	keep supported platforms working as before
-	•	avoid unnecessary side effects
-	•	restore termios state on close where possible
-	•	wrap syscall failures with context
-	•	keep RS-485 support in the root package
+If you want a cleaner pipeline, I would do:
+	•	lint/verify job on ubuntu:
+	•	checkout
+	•	setup-go
+	•	go mod tidy && git diff --exit-code
+	•	go vet ./...
+	•	test matrix:
+	•	os: ubuntu-latest, macos-latest, windows-latest
+	•	go-version: one current stable
+	•	compat job:
+	•	ubuntu
+	•	go 1.20
+	•	go test ./...
+	•	coverage job:
+	•	ubuntu
+	•	one Go version
+	•	go test -coverprofile=coverage.out ./...
+	•	upload/codecov
 
-Windows behavior
+That is more aligned with this repo’s risk profile.
 
-Windows code must:
-	•	preserve open/read/write/close support
-	•	preserve timeout handling
-	•	wrap underlying failures with context
-	•	align parity/default behavior with the generic root API
+⸻
 
-Testing Requirements
+Final take
 
-The test strategy must not depend on physical serial hardware for core coverage.
+You are basically at the point where I would stop redesigning and do only:
+	•	better OS coverage in CI
+	•	a few final tests
+	•	complete README/example polish
+	•	remove empty leftovers
 
-Required tests:
-	•	DefaultConfig behavior
-	•	modbus.DefaultRTUConfig behavior
-	•	config validation success/failure cases
-	•	parity parsing/validation behavior
-	•	stop-bit validation behavior
-	•	timeout sentinel behavior where unit-testable
-	•	error wrapping expectations for validation paths
+That is the right finish line for this library.
 
-Recommended tests:
-	•	table-driven tests for supported/unsupported config values
-	•	tests for zero-value/default normalization behavior
-	•	example tests or doctest-style examples
+---
 
-Optional integration tests may be added later for PTY-backed Unix verification, but these should not be required for standard CI unless stable and portable.
+## Implementation progress
 
-Backward Compatibility Requirements
-
-This repository is already a renamed/forked module, so selective cleanup is acceptable. However:
-	•	keep the public API intentionally small
-	•	avoid gratuitous breaking changes
-	•	document intentional behavioral changes in defaults or validation
-	•	provide migration notes when changing exported types or defaults
-
-Quality Bar
-
-The refactor is successful when:
-	•	the root package reads like an idiomatic generic serial transport library
-	•	the public API is easy to understand without reading platform code
-	•	configuration errors are caught early and explained clearly
-	•	the library does not log internally
-	•	tests cover the important user-visible behavior
-	•	docs make the layering between serial and modbus obvious
-	•	the package feels production-ready for reuse in other Go projects
+| # | Item | Status |
+|---|------|--------|
+| 1 | CI: add go test -shuffle=on | Done: Test and compat/coverage steps use `-shuffle=on`. |
+| 2 | CI: OS coverage (Linux, Windows, macOS) | Done: test job matrix os: ubuntu-latest, macos-latest, windows-latest; Go 1.22. |
+| 3 | CI: go mod tidy once | Done: verify job runs tidy once; test/compat/coverage do not. |
+| 4 | CI: cache Go modules | Done: setup-go with `cache: true` in all jobs. |
+| 5 | README: copy-paste complete examples | Done: timeout and config validation snippets are full package main with imports. |
+| 6 | DefaultModbusRTUConfig | No change (already present; no further aliases). |
+| 7 | REFACTOR.md | Kept with content; progress table added. |
+| 8 | Example tests | Present: ExampleDefaultConfig, ExampleParseParity, ExampleConfig_Validate, ExampleConfig_Normalized, ExampleDefaultRTUConfig (modbus); hardware-free. |
+| 9 | Normalized() doc/example | Done: doc comment example in config.go; ExampleConfig_Normalized in example_test.go. |
+| 10 | Focused tests | Present: TestConfigNormalized, TestIsUnsupportedBaudRate, TestOpenUnsupportedPlatform, TestZeroValueStringAndMarshalText, TestConfigErrorErrorString, nil UnmarshalText covered. |

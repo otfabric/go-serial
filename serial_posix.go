@@ -1,11 +1,10 @@
-// +build darwin linux freebsd openbsd netbsd
+//go:build darwin || linux || freebsd || openbsd || netbsd
 
 package serial
 
 import (
 	"errors"
 	"fmt"
-	"log"
 	"os"
 	"syscall"
 	"time"
@@ -28,21 +27,31 @@ const (
 	rs485Tiocs        = 0x542f
 )
 
-// rs485_ioctl_opts is used to configure RS485 options in the driver
-type rs485_ioctl_opts struct {
+// rs485IoctlOpts is used to configure RS485 options in the driver.
+type rs485IoctlOpts struct {
 	flags                 uint32
 	delay_rts_before_send uint32
 	delay_rts_after_send  uint32
 	padding               [5]uint32
 }
 
-// New allocates and returns a new serial port controller.
-func New() Port {
+// newPort allocates a new serial port (internal use).
+func newPort() *port {
 	return &port{fd: -1}
 }
 
-// Open connects to the given serial port.
-func (p *port) Open(c *Config) (err error) {
+func init() {
+	openPort = func(c *Config) (Port, error) {
+		p := newPort()
+		if err := p.open(c); err != nil {
+			return nil, err
+		}
+		return p, nil
+	}
+}
+
+// open connects to the given serial port (internal use).
+func (p *port) open(c *Config) (err error) {
 	termios, err := newTermios(c)
 	if err != nil {
 		return
@@ -52,19 +61,18 @@ func (p *port) Open(c *Config) (err error) {
 	// O_NDELAY: no data carrier detect.
 	p.fd, err = syscall.Open(c.Address, syscall.O_RDWR|syscall.O_NOCTTY|syscall.O_NDELAY|syscall.O_CLOEXEC, 0666)
 	if err != nil {
-		return
+		return fmt.Errorf("serial: open %s: %w", c.Address, err)
 	}
 	// Backup current termios to restore on closing.
 	p.backupTermios()
 	if err = p.setTermios(termios); err != nil {
-		// No need to restore termios
 		syscall.Close(p.fd)
 		p.fd = -1
 		p.oldTermios = nil
 		return err
 	}
 	if err = enableRS485(p.fd, &c.RS485); err != nil {
-		p.Close()
+		p.close()
 		return err
 	}
 	p.timeout = c.Timeout
@@ -73,17 +81,27 @@ func (p *port) Open(c *Config) (err error) {
 
 func (p *port) Close() (err error) {
 	if p.fd == -1 {
-		return
+		return nil
 	}
-	p.restoreTermios()
-	err = syscall.Close(p.fd)
+	restoreErr := p.restoreTermios()
+	closeErr := syscall.Close(p.fd)
 	p.fd = -1
 	p.oldTermios = nil
-	return
+	return errors.Join(restoreErr, closeErr)
 }
 
-// Read reads from serial port. Port must be opened before calling this method.
-// It is blocked until all data received or timeout after p.timeout.
+// close closes without joining errors (used when open fails mid-way).
+func (p *port) close() {
+	if p.fd == -1 {
+		return
+	}
+	_ = p.restoreTermios()
+	_ = syscall.Close(p.fd)
+	p.fd = -1
+	p.oldTermios = nil
+}
+
+// Read reads from the serial port. It blocks until data is available or the configured timeout expires.
 func (p *port) Read(b []byte) (n int, err error) {
 	var rfds syscall.FdSet
 
@@ -101,57 +119,54 @@ func (p *port) Read(b []byte) (n int, err error) {
 			break
 		}
 		if err != syscall.EINTR {
-			err = fmt.Errorf("serial: could not select: %v", err)
+			err = fmt.Errorf("serial: select: %w", err)
 			return
 		}
 	}
 	if !fdisset(fd, &rfds) {
-		// Timeout
 		err = ErrTimeout
 		return
 	}
 	n, err = syscall.Read(fd, b)
+	if err != nil {
+		err = fmt.Errorf("serial: read: %w", err)
+	}
 	return
 }
 
 // Write writes data to the serial port.
 func (p *port) Write(b []byte) (n int, err error) {
 	n, err = syscall.Write(p.fd, b)
+	if err != nil {
+		err = fmt.Errorf("serial: write: %w", err)
+	}
 	return
 }
 
 func (p *port) setTermios(termios *syscall.Termios) (err error) {
 	if err = tcsetattr(p.fd, termios); err != nil {
-		err = fmt.Errorf("serial: could not set setting: %v", err)
+		err = fmt.Errorf("serial: set termios: %w", err)
 	}
 	return
 }
 
-// backupTermios saves current termios setting.
-// Make sure that device file has been opened before calling this function.
+// backupTermios saves current termios setting for restore on close.
 func (p *port) backupTermios() {
 	oldTermios := &syscall.Termios{}
 	if err := tcgetattr(p.fd, oldTermios); err != nil {
-		// Warning only.
-		log.Printf("serial: could not get setting: %v\n", err)
-		return
+		return // best-effort; skip restore on close
 	}
-	// Will be reloaded when closing.
 	p.oldTermios = oldTermios
 }
 
-// restoreTermios restores backed up termios setting.
-// Make sure that device file has been opened before calling this function.
-func (p *port) restoreTermios() {
+// restoreTermios restores backed up termios setting on close. Returns any error from tcsetattr.
+func (p *port) restoreTermios() error {
 	if p.oldTermios == nil {
-		return
+		return nil
 	}
-	if err := tcsetattr(p.fd, p.oldTermios); err != nil {
-		// Warning only.
-		log.Printf("serial: could not restore setting: %v\n", err)
-		return
-	}
+	err := tcsetattr(p.fd, p.oldTermios)
 	p.oldTermios = nil
+	return err
 }
 
 // Helpers for termios
@@ -164,9 +179,9 @@ func newTermios(c *Config) (termios *syscall.Termios, err error) {
 		flag = syscall.B9600
 	} else {
 		var ok bool
-		flag, ok = baudRates[c.BaudRate]
+		flag, ok = baudRates[int(c.BaudRate)]
 		if !ok {
-			err = fmt.Errorf("serial: unsupported baud rate %v", c.BaudRate)
+			err = fmt.Errorf("serial: unsupported baud rate %d: %w", c.BaudRate, ErrInvalidConfig)
 			return
 		}
 	}
@@ -180,40 +195,36 @@ func newTermios(c *Config) (termios *syscall.Termios, err error) {
 		flag = syscall.CS8
 	} else {
 		var ok bool
-		flag, ok = charSizes[c.DataBits]
+		flag, ok = charSizes[int(c.DataBits)]
 		if !ok {
-			err = fmt.Errorf("serial: unsupported character size %v", c.DataBits)
+			err = fmt.Errorf("serial: unsupported data bits %d: %w", c.DataBits, ErrInvalidConfig)
 			return
 		}
 	}
 	termios.Cflag |= flag
 	// Stop bits
 	switch c.StopBits {
-	case 0, 1:
+	case 0, StopBits1:
 		// Default is one stop bit.
-		// noop
-	case 2:
-		// CSTOPB: Set two stop bits.
+	case StopBits2:
 		termios.Cflag |= syscall.CSTOPB
 	default:
-		err = fmt.Errorf("serial: unsupported stop bits %v", c.StopBits)
+		err = fmt.Errorf("serial: unsupported stop bits %d: %w", c.StopBits, ErrInvalidConfig)
 		return
 	}
 	switch c.Parity {
-	case "", "N":
+	case "", ParityNone:
 		// No parity (empty string = generic default)
-	case "E":
-		// PARENB: Enable parity generation on output (even).
+	case ParityEven:
 		termios.Cflag |= syscall.PARENB
-		// INPCK: Enable input parity checking.
 		termios.Iflag |= syscall.INPCK
-	case "O":
+	case ParityOdd:
 		// PARODD: Parity is odd.
 		termios.Cflag |= syscall.PARODD
 		termios.Cflag |= syscall.PARENB
 		termios.Iflag |= syscall.INPCK
 	default:
-		err = fmt.Errorf("serial: unsupported parity %v", c.Parity)
+		err = fmt.Errorf("serial: unsupported parity %q: %w", c.Parity, ErrInvalidConfig)
 		return
 	}
 	// Control modes.
@@ -232,7 +243,7 @@ func enableRS485(fd int, config *RS485Config) error {
 	if !config.Enabled {
 		return nil
 	}
-	rs485 := rs485_ioctl_opts{
+	rs485 := rs485IoctlOpts{
 		rs485Enabled,
 		uint32(config.DelayRtsBeforeSend / time.Millisecond),
 		uint32(config.DelayRtsAfterSend / time.Millisecond),
@@ -258,7 +269,7 @@ func enableRS485(fd int, config *RS485Config) error {
 		return os.NewSyscallError("SYS_IOCTL (RS485)", errno)
 	}
 	if r != 0 {
-		return errors.New("serial: unknown error from SYS_IOCTL (RS485)")
+		return errors.New("serial: RS485 ioctl failed")
 	}
 	return nil
 }
