@@ -8,7 +8,7 @@ import (
 )
 
 const (
-	// socat -d -d pty,raw,echo=0 pty,raw,echo=0
+	// socat -d -d pty,raw,echo=0 pty,raw,echo=0.
 	pty1 = "/dev/ttys009"
 	pty2 = "/dev/ttys010"
 )
@@ -391,7 +391,7 @@ func TestReadWrite(t *testing.T) {
 	if err != nil {
 		t.Skipf("skip when no loopback serial available: %v", err)
 	}
-	defer port1.Close()
+	defer func() { _ = port1.Close() }()
 
 	config2 := Config{
 		Address:  pty2,
@@ -404,7 +404,7 @@ func TestReadWrite(t *testing.T) {
 	if err != nil {
 		t.Skipf("skip when no loopback serial available: %v", err)
 	}
-	defer port2.Close()
+	defer func() { _ = port2.Close() }()
 
 	message := "test serial"
 	n, err := port1.Write([]byte(message))

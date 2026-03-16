@@ -1,5 +1,31 @@
 # go-serial Releases
 
+## v0.1.1
+
+Patch release: tooling, tests, CI, and small correctness fixes. No intentional API breaks.
+
+### Changes
+
+- **Module path**: canonical import is `github.com/otfabric/go-serial` (README, badges, docs aligned).
+- **CI**
+  - **`build.yml`**: cross-compilation smoke only (`GOOS`/`GOARCH` matrix, `linux/arm` with `GOARM=7`, `CGO_ENABLED=0`).
+  - **`ci.yml`**: primary test/lint/coverage via reusable `otfabric/.github` workflow.
+  - Coverage job waits on compat; example package excluded from coverage profile; static checks include `gofmt`.
+- **Tests**
+  - `TestReadWrite` skips when the PTY cannot be opened (permission / busy), so local `make check` and CI stay green without loopback hardware.
+  - Unsupported-baud tests split: POSIX-only (`serial_posix_test.go`) vs Windows driver-level acceptance (`serial_windows_test.go`).
+  - **`types_test.go`**: broad coverage for `types.go` (marshal/unmarshal, `String`, error paths).
+- **Code**
+  - **`termios_flag_darwin.go` / `termios_flag_posix.go`**: platform `termiosFlag` alias so `newTermios` avoids an unused `termios.Cflag` read (staticcheck SA4006).
+  - **errcheck / godot**: explicit `syscall.Close` handling on termios setup failure; deferred `Close()` in tests; comment punctuation.
+- **Makefile**: `golangci-lint run ./...` (import paths from `go list` are not valid linter path arguments).
+
+### Go version
+
+- Unchanged: **Go 1.20+**.
+
+---
+
 ## v0.1.0 (first release)
 
 Initial public release of `github.com/otfabric/go-serial`, a generic cross-platform Go library for serial (UART) communication over RS-232 and RS-485.

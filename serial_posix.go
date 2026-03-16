@@ -66,7 +66,7 @@ func (p *port) open(c *Config) (err error) {
 	// Backup current termios to restore on closing.
 	p.backupTermios()
 	if err = p.setTermios(termios); err != nil {
-		syscall.Close(p.fd)
+		_ = syscall.Close(p.fd)
 		p.fd = -1
 		p.oldTermios = nil
 		return err
@@ -173,7 +173,7 @@ func (p *port) restoreTermios() error {
 
 func newTermios(c *Config) (termios *syscall.Termios, err error) {
 	termios = &syscall.Termios{}
-	flag := termios.Cflag
+	var flag termiosFlag
 	// Baud rate (zero = generic default 9600)
 	if c.BaudRate == 0 {
 		flag = syscall.B9600
@@ -238,7 +238,7 @@ func newTermios(c *Config) (termios *syscall.Termios, err error) {
 	return
 }
 
-// enableRS485 enables RS485 functionality of driver via an ioctl if the config says so
+// enableRS485 enables RS485 functionality of driver via an ioctl if the config says so.
 func enableRS485(fd int, config *RS485Config) error {
 	if !config.Enabled {
 		return nil

@@ -3,8 +3,8 @@
 [![Go](https://img.shields.io/badge/Go-1.20%2B-00ADD8?style=flat&logo=go)](https://go.dev/)
 [![License](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Go Report Card](https://goreportcard.com/badge/github.com/otfabric/go-serial)](https://goreportcard.com/report/github.com/otfabric/go-serial)
-[![CI](https://github.com/otfabric/go-serial/actions/workflows/test.yml/badge.svg)](https://github.com/otfabric/go-serial/actions/workflows/test.yml)
-[![Codecov](https://codecov.io/github/otfabric/go-serial/graph/badge.svg)](https://app.codecov.io/github/otfabric/go-serial)
+[![CI](https://github.com/otfabric/go-serial/actions/workflows/ci.yml/badge.svg)](https://github.com/otfabric/go-serial/actions/workflows/ci.yml)
+[![Codecov](https://codecov.io/github/otfabric/go-serial/graph/badge.svg?token=P3fcpLkUH4)](https://codecov.io/github/otfabric/go-serial)
 [![Release](https://img.shields.io/github/v/release/otfabric/go-serial?label=release)](https://github.com/otfabric/go-serial/releases)
 
 A generic cross-platform Go library for serial (UART) communication over RS-232 and RS-485.
