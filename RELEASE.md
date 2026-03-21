@@ -1,5 +1,14 @@
 # go-serial Releases
 
+## v0.1.2
+
+Patch release: no changes.
+
+### Changes
+- None
+
+---
+
 ## v0.1.1
 
 Patch release: tooling, tests, CI, and small correctness fixes. No intentional API breaks.
