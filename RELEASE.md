@@ -1,5 +1,22 @@
 # go-serial Releases
 
+## v0.1.3
+
+Minor release: raise the minimum supported Go version and refresh CI.
+
+### Changes
+
+- **Go toolchain**
+  - **`go.mod`**: `go 1.23` — the module now requires **Go 1.23 or later**. Upgrade your toolchain before building or testing dependents.
+- **GitHub Actions**
+  - **`ci.yml`** (single workflow): calls reusable **`otfabric/.github/.github/workflows/go-ci.yml@v2`** with **`go-versions`**: `1.23`, `1.24`, `1.25`, `1.26` (JSON array string), and defines an in-repo **`cross-build` job** that runs **`go build ./...`** with **Go 1.23** (`setup-go`) across the `GOOS`/`GOARCH` matrix (`linux/arm` still sets **`GOARM=7`**; **`CGO_ENABLED=0`**). The former standalone **`build.yml`** has been merged into **`ci.yml`**.
+
+### Go version
+
+- Requires **Go 1.23+** (see `go.mod`).
+
+---
+
 ## v0.1.2
 
 Patch release: no changes.
@@ -17,8 +34,8 @@ Patch release: tooling, tests, CI, and small correctness fixes. No intentional A
 
 - **Module path**: canonical import is `github.com/otfabric/go-serial` (README, badges, docs aligned).
 - **CI**
-  - **`build.yml`**: cross-compilation smoke only (`GOOS`/`GOARCH` matrix, `linux/arm` with `GOARM=7`, `CGO_ENABLED=0`).
   - **`ci.yml`**: primary test/lint/coverage via reusable `otfabric/.github` workflow.
+  - Cross-compilation smoke (`GOOS`/`GOARCH` matrix, `linux/arm` with `GOARM=7`, `CGO_ENABLED=0`) shipped in a separate **`build.yml`** in v0.1.1; that job now lives in **`ci.yml`** as **`cross-build`**.
   - Coverage job waits on compat; example package excluded from coverage profile; static checks include `gofmt`.
 - **Tests**
   - `TestReadWrite` skips when the PTY cannot be opened (permission / busy), so local `make check` and CI stay green without loopback hardware.

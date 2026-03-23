@@ -4,7 +4,7 @@ Thank you for your interest in contributing. This document explains how to get s
 
 ## Development setup
 
-- **Go**: 1.20 or later (see [go.mod](go.mod)).
+- **Go**: 1.23 or later (see [go.mod](go.mod)).
 
 ```sh
 git clone https://github.com/otfabric/go-serial.git
