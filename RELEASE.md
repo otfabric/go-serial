@@ -1,5 +1,30 @@
 # go-serial Releases
 
+## v0.1.5
+
+Patch release: stronger automated test coverage and POSIX loopback I/O tests. No API or behavior changes.
+
+### Changes
+
+- **Tests**
+  - **`loopback_linux_test.go`**, **`loopback_freebsd_test.go`**, **`loopback_darwin_test.go`**, **`loopback_stub_test.go`**: platform-specific PTY helpers (proper `*_test.go` naming so cross-builds do not compile test code into the library).
+  - **`TestReadWrite`** creates two bridged pseudo-terminal pairs via `/dev/ptmx` when available; skips cleanly when PTY creation is not permitted.
+  - Optional manual loopback via **`SERIAL_LOOPBACK_PTY1`** and **`SERIAL_LOOPBACK_PTY2`** (e.g. from `socat`).
+  - **`serial_test.go`**: additional **`ConfigError.Error()`** coverage.
+  - FreeBSD: use **`TIOCGPTN`** only (no **`TIOCSPTLCK`** in Go's FreeBSD syscall package); OpenBSD/NetBSD skip programmatic PTY and rely on env vars.
+- **Coverage**
+  - **`Makefile`**: **`make coverage`** excludes the **`example/`** demo package and uses **`-coverpkg`** for library-only coverage (aligned with shared CI **`test-exclude-regex`**).
+  - Statement coverage for library packages is now ~**75%** (up from ~**43%** before loopback I/O tests).
+- **README**
+  - Updated **Automated tests** and **Manual loopback testing** sections for PTY loopback and coverage workflow.
+  - Removed deprecated **Go Report Card** badge.
+
+### Go version
+
+- Unchanged: requires **Go 1.23+** (see `go.mod`).
+
+---
+
 ## v0.1.4
 
 Patch release: open-source license hygiene, README badge normalization, and public repository readiness. No API or behavior changes.

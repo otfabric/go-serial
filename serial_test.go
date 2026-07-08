@@ -4,15 +4,8 @@ package serial
 
 import (
 	"errors"
-	"os"
 	"runtime"
 	"testing"
-)
-
-const (
-	// socat -d -d pty,raw,echo=0 pty,raw,echo=0.
-	pty1 = "/dev/ttys009"
-	pty2 = "/dev/ttys010"
 )
 
 // testPortPath returns a fake port path for tests that don't open the device.
@@ -220,6 +213,15 @@ func TestConfigErrorErrorString(t *testing.T) {
 	if err2.Error() == "" || err2.Error() == "<nil>" {
 		t.Errorf("ConfigError.Error() = %q", err2.Error())
 	}
+	// Without Reason or Err
+	err3 := &ConfigError{Field: "Address", Value: ""}
+	if got := err3.Error(); got != `serial: invalid Address=` {
+		t.Errorf("ConfigError.Error() = %q, want serial: invalid Address=", got)
+	}
+	// Unwrap
+	if err.Unwrap() != ErrInvalidConfig {
+		t.Errorf("Unwrap() = %v, want ErrInvalidConfig", err.Unwrap())
+	}
 }
 
 func TestOpenUnsupportedPlatform(t *testing.T) {
@@ -386,7 +388,8 @@ func TestErrTimeoutSentinel(t *testing.T) {
 }
 
 func TestReadWrite(t *testing.T) {
-	checkPty(t)
+	pty1, pty2, cleanup := setupLoopbackPair(t)
+	defer cleanup()
 
 	config1 := Config{Address: pty1}
 	port1, err := Open(&config1)
@@ -423,13 +426,5 @@ func TestReadWrite(t *testing.T) {
 	}
 	if string(buf[:n]) != message {
 		t.Fatalf("unexpected response %q (len: %d)", buf[:n], n)
-	}
-}
-
-func checkPty(t *testing.T) {
-	for _, p := range [...]string{pty1, pty2} {
-		if _, err := os.Stat(p); err != nil {
-			t.Skipf("%v does not exist", p)
-		}
 	}
 }

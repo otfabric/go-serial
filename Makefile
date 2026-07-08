@@ -4,6 +4,7 @@ SHELL := /bin/bash
 
 GO ?= go
 PKGS := ./...
+COVER_PKGS := $(shell $(GO) list ./... | grep -v '/example$$')
 
 .PHONY: help test test-race vet lint fmt bench coverage coverage-html coverage-clean tidy verify check clean
 
@@ -39,7 +40,9 @@ bench: ## Run benchmarks (if any)
 
 coverage: ## Run tests with coverage profile and text summary
 	@echo "Running coverage..."
-	$(GO) test -shuffle=on -coverprofile=coverage.out $(PKGS)
+	$(GO) test -shuffle=on -coverprofile=coverage.out \
+		-coverpkg=$(shell $(GO) list $(COVER_PKGS) | paste -sd, -) \
+		$(COVER_PKGS)
 	$(GO) tool cover -func=coverage.out | tee coverage.txt
 
 coverage-html: coverage ## Generate HTML coverage report
