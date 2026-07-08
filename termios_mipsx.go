@@ -1,5 +1,7 @@
 //go:build linux && (mips || mipsle || mips64 || mips64le)
 
+// SPDX-License-Identifier: MIT
+
 package serial
 
 import (

@@ -1,5 +1,7 @@
 //go:build openbsd
 
+// SPDX-License-Identifier: MIT
+
 package serial
 
 import (

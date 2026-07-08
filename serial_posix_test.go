@@ -1,5 +1,7 @@
 //go:build darwin || linux || freebsd || openbsd || netbsd
 
+// SPDX-License-Identifier: MIT
+
 package serial
 
 import (

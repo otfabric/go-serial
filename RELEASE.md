@@ -1,5 +1,28 @@
 # go-serial Releases
 
+## v0.1.4
+
+Patch release: open-source license hygiene, README badge normalization, and public repository readiness. No API or behavior changes.
+
+### Changes
+
+- **License**
+  - **`LICENSE`**: MIT license at repo root (`Copyright (c) 2026 OT Fabric`).
+  - **Go sources**: `// SPDX-License-Identifier: MIT` added to first-party `.go` files (build tags preserved; generated Windows syscall/types files unchanged).
+  - **`README.md`**: added a **License** section linking to [LICENSE](LICENSE).
+- **README badges**
+  - Standardized badge block for public GitHub: Go version, pkg.go.dev, License, CI, Go Report Card, Codecov, Release.
+  - Added **Go Reference** (pkg.go.dev) badge using module path `github.com/otfabric/go-serial`.
+  - Removed Codecov badge URL token; badge uses public `codecov.io/gh/otfabric/go-serial` links.
+- **Repository visibility**
+  - Prepared for **public** release: badges and docs assume a public `otfabric/go-serial` repository (CI, pkg.go.dev, Go Report Card, Codecov, and Release badges may need a first successful CI run, release tag, or coverage upload after going public).
+
+### Go version
+
+- Unchanged: requires **Go 1.23+** (see `go.mod`).
+
+---
+
 ## v0.1.3
 
 Minor release: raise the minimum supported Go version and refresh CI.

@@ -1,6 +1,8 @@
 //go:build ignore
 // +build ignore
 
+// SPDX-License-Identifier: MIT
+
 package serial
 
 // #include <windows.h>

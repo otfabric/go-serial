@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 /*
 Package serial provides a cross-platform library for opening, configuring, and
 using serial ports (UART, RS-232, RS-485). It is transport-focused and

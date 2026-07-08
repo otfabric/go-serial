@@ -1,10 +1,11 @@
 # go-serial
 
 [![Go](https://img.shields.io/badge/Go-1.23%2B-00ADD8?style=flat&logo=go)](https://go.dev/)
+[![Go Reference](https://pkg.go.dev/badge/github.com/otfabric/go-serial.svg)](https://pkg.go.dev/github.com/otfabric/go-serial)
 [![License](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Go Report Card](https://goreportcard.com/badge/github.com/otfabric/go-serial)](https://goreportcard.com/report/github.com/otfabric/go-serial)
 [![CI](https://github.com/otfabric/go-serial/actions/workflows/ci.yml/badge.svg)](https://github.com/otfabric/go-serial/actions/workflows/ci.yml)
-[![Codecov](https://codecov.io/github/otfabric/go-serial/graph/badge.svg?token=P3fcpLkUH4)](https://codecov.io/github/otfabric/go-serial)
+[![Go Report Card](https://goreportcard.com/badge/github.com/otfabric/go-serial)](https://goreportcard.com/report/github.com/otfabric/go-serial)
+[![Codecov](https://codecov.io/gh/otfabric/go-serial/graph/badge.svg)](https://codecov.io/gh/otfabric/go-serial)
 [![Release](https://img.shields.io/github/v/release/otfabric/go-serial?label=release)](https://github.com/otfabric/go-serial/releases)
 
 A generic cross-platform Go library for serial (UART) communication over RS-232 and RS-485.
@@ -216,3 +217,7 @@ Tests do not require a serial device; hardware-dependent tests are skipped when 
 cfg := modbus.DefaultRTUConfig("/dev/ttyUSB0")
 port, err := serial.Open(&cfg)
 ```
+
+## License
+
+This project is licensed under the MIT License. See [LICENSE](./LICENSE).

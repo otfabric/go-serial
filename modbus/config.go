@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 // Package modbus provides Modbus RTU-oriented serial presets for use with the parent serial package.
 // It does not implement Modbus framing, CRC, or protocol logic—use a dedicated Modbus library for that.
 package modbus

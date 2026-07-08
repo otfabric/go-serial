@@ -1,5 +1,7 @@
 //go:build freebsd || netbsd
 
+// SPDX-License-Identifier: MIT
+
 package serial
 
 import (
