@@ -4,7 +4,6 @@
 [![Go Reference](https://pkg.go.dev/badge/github.com/otfabric/go-serial.svg)](https://pkg.go.dev/github.com/otfabric/go-serial)
 [![License](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![CI](https://github.com/otfabric/go-serial/actions/workflows/ci.yml/badge.svg)](https://github.com/otfabric/go-serial/actions/workflows/ci.yml)
-[![Go Report Card](https://goreportcard.com/badge/github.com/otfabric/go-serial)](https://goreportcard.com/report/github.com/otfabric/go-serial)
 [![Codecov](https://codecov.io/gh/otfabric/go-serial/graph/badge.svg)](https://codecov.io/gh/otfabric/go-serial)
 [![Release](https://img.shields.io/github/v/release/otfabric/go-serial?label=release)](https://github.com/otfabric/go-serial/releases)
 
