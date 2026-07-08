@@ -9,6 +9,27 @@
 
 A generic cross-platform Go library for serial (UART) communication over RS-232 and RS-485.
 
+## Table of Contents
+
+- [Installation](#installation)
+- [What this library is](#what-this-library-is)
+- [What this library is not](#what-this-library-is-not)
+- [Usage](#usage)
+  - [Generic serial (default 9600 8N1)](#generic-serial-default-9600-8n1)
+  - [Modbus RTU preset (19200 8E1)](#modbus-rtu-preset-19200-8e1)
+  - [Typed configuration](#typed-configuration)
+  - [Timeout and error handling](#timeout-and-error-handling)
+  - [Config validation](#config-validation)
+  - [Zero-value defaults](#zero-value-defaults)
+  - [RS-485](#rs-485)
+  - [Supported platforms](#supported-platforms)
+- [Automated tests](#automated-tests)
+- [Manual loopback testing](#manual-loopback-testing)
+  - [Linux and macOS](#linux-and-macos)
+  - [Windows](#windows)
+- [Migration from goburrow/serial](#migration-from-goburrowserial)
+- [License](#license)
+
 ## Installation
 
 ```bash
@@ -187,14 +208,39 @@ Run the test suite with:
 go test ./...
 ```
 
-Tests do not require a serial device; hardware-dependent tests are skipped when no suitable port is available.
+Or use the Makefile targets:
+
+```bash
+make test        # unit tests (shuffle enabled)
+make test-race   # race detector
+make coverage    # library coverage report (example/ excluded)
+make check       # fmt, tidy, vet, lint, tests, race, coverage
+```
+
+Tests do not require physical serial hardware. On Linux, macOS, and BSD, **`TestReadWrite`** creates a programmatic PTY loopback via `/dev/ptmx` and exercises open, read, write, and close. The test skips when PTY creation is unavailable (e.g. restricted environments).
+
+For a manual socat loopback, set device paths before testing:
+
+```bash
+# Terminal 1: socat -d -d pty,raw,echo=0 pty,raw,echo=0
+export SERIAL_LOOPBACK_PTY1=/dev/pts/3   # paths from socat output
+export SERIAL_LOOPBACK_PTY2=/dev/pts/4
+go test -run TestReadWrite ./...
+```
+
+The **`example/`** package is a standalone demo (`go run ./example/...`); it is excluded from **`make coverage`** and from CI coverage via the shared workflow package filter.
 
 ## Manual loopback testing
 
+For interactive debugging outside the test suite:
+
 ### Linux and macOS
 
-- `socat -d -d pty,raw,echo=0 pty,raw,echo=0`
-- On macOS: `brew install socat`
+```bash
+socat -d -d pty,raw,echo=0 pty,raw,echo=0
+```
+
+On macOS: `brew install socat`. Use the two PTY paths from socat output with your serial tool or set **`SERIAL_LOOPBACK_PTY1`** / **`SERIAL_LOOPBACK_PTY2`** for **`TestReadWrite`**.
 
 ### Windows
 
