@@ -1,5 +1,33 @@
 # go-serial Releases
 
+## v0.1.6
+
+**Date:** 2026-07-30
+**Previous release:** v0.1.5
+
+## Summary
+
+Patch release: document Port ownership, concurrency, timeouts, and Close
+semantics; harden the Makefile. No API or behaviour changes.
+
+## Changes
+
+### Documentation
+
+- **Package docs (`serial.go`)** — Ownership after `Open`, one-reader/one-writer concurrency, timeout platform differences, Close vs blocked I/O.
+- **README** — New **Ownership, concurrency, and Close** section; **Project structure** summary; TOC updated.
+
+### Build / tooling
+
+- **Makefile `vuln`** — `govulncheck ./...`, included in `make check`.
+- **Makefile** — exports `GOWORK=off` so a parent `go.work` that omits this module does not break checks.
+
+### Unchanged
+
+- No API, wire, or I/O behaviour changes. Concurrent Close with I/O remains unsupported (now documented).
+
+---
+
 ## v0.1.5
 
 Patch release: stronger automated test coverage and POSIX loopback I/O tests. No API or behavior changes.

@@ -12,12 +12,14 @@ A generic cross-platform Go library for serial (UART) communication over RS-232 
 ## Table of Contents
 
 - [Installation](#installation)
+- [Project structure](#project-structure)
 - [What this library is](#what-this-library-is)
 - [What this library is not](#what-this-library-is-not)
 - [Usage](#usage)
   - [Generic serial (default 9600 8N1)](#generic-serial-default-9600-8n1)
   - [Modbus RTU preset (19200 8E1)](#modbus-rtu-preset-19200-8e1)
   - [Typed configuration](#typed-configuration)
+  - [Ownership, concurrency, and Close](#ownership-concurrency-and-close)
   - [Timeout and error handling](#timeout-and-error-handling)
   - [Config validation](#config-validation)
   - [Zero-value defaults](#zero-value-defaults)
@@ -35,6 +37,19 @@ A generic cross-platform Go library for serial (UART) communication over RS-232 
 ```bash
 go get github.com/otfabric/go-serial
 ```
+
+## Project structure
+
+```
+go-serial/
+├── .                  Public package `serial` — Open, Config, Port
+├── modbus/            Modbus RTU serial presets (defaults only)
+├── example/           Demo program
+├── RELEASE.md         Release history
+└── README.md
+```
+
+Platform backends are build-tagged (`serial_posix.go`, `serial_windows.go`, …).
 
 ## What this library is
 
@@ -112,6 +127,26 @@ cfg.DataBits = serial.DataBits8
 cfg.StopBits = serial.StopBits1
 cfg.Parity = serial.ParityNone
 ```
+
+### Ownership, concurrency, and Close
+
+- **Ownership** — `Open` copies and normalizes `Config`. The caller owns the
+  returned `Port` and must `Close` it. Do not use the port after `Close`.
+- **Concurrency** — One `Read` and one `Write` may run concurrently on the same
+  `Port` (full-duplex). Do **not** run multiple concurrent readers or writers,
+  and do **not** call `Close` concurrently with `Read`/`Write` (undefined).
+- **Timeouts** — `Config.Timeout` applies to **Read** on all platforms. On
+  **Windows**, the same timeout is also applied to Write when `Timeout > 0`.
+  On **POSIX** (Linux/macOS/BSD), Write has no library-applied timeout (blocking
+  `write(2)`). `Timeout == 0` means Read may block indefinitely until data
+  arrives (or the underlying fd/handle is closed by the OS).
+- **Close** — Restores prior termios (POSIX) or DCB/timeouts (Windows) when
+  possible, then closes the fd/handle. Closing **may** cause a blocked
+  Read/Write to return an error on some platforms, but this is **not** a
+  synchronized cancel API (no `CancelIo` / coordinated wakeup). Prefer a finite
+  `Timeout` for Read, and avoid `Close` while I/O is in flight.
+
+Package godoc (`serial.go`) restates the same contract.
 
 ### Timeout and error handling
 

@@ -4,6 +4,29 @@
 Package serial provides a cross-platform library for opening, configuring, and
 using serial ports (UART, RS-232, RS-485). It is transport-focused and
 protocol-neutral. For Modbus RTU serial presets, see the serial/modbus subpackage.
+
+# Ownership
+
+Open copies and normalizes Config; the caller owns the returned Port and must
+Close it. Do not use the Port after Close.
+
+# Concurrency
+
+One Read and one Write may run concurrently on the same Port (full-duplex).
+Do not run multiple concurrent Readers or Writers, and do not call Close
+concurrently with Read or Write — that is undefined.
+
+# Timeouts and Close
+
+Config.Timeout applies to Read on all platforms; Write timeout is honored on
+Windows when Timeout > 0, and is not applied on POSIX (Write is a blocking
+syscall.Write). Timeout == 0 means Read may block indefinitely until data
+arrives (or the fd/handle is closed by the OS).
+
+Close restores prior termios/DCB settings when possible, then closes the
+fd/handle. Closing may cause a blocked Read/Write to return an error on some
+platforms, but that is not a synchronized cancel contract — prefer a finite
+Timeout for Read, and avoid Close while I/O is in flight.
 */
 package serial
 
@@ -14,6 +37,8 @@ import (
 )
 
 // Port represents an opened serial port returned by Open.
+// The caller owns the Port and must Close it. See package docs for
+// concurrency and Close semantics.
 type Port interface {
 	io.ReadWriteCloser
 }
