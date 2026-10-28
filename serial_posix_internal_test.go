@@ -217,11 +217,11 @@ func closedFD(t *testing.T) int {
 	return fd
 }
 
-func TestReadSelectError(t *testing.T) {
+func TestReadWaitError(t *testing.T) {
 	p := &port{fd: closedFD(t), timeout: 10 * time.Millisecond}
 	n, err := p.Read(make([]byte, 4))
 	if err == nil || n != 0 {
-		t.Fatalf("Read = %d, %v; want select error", n, err)
+		t.Fatalf("Read = %d, %v; want wait error", n, err)
 	}
 	if !errors.Is(err, syscall.EBADF) {
 		t.Fatalf("want EBADF, got %v", err)
@@ -269,5 +269,26 @@ func TestTermiosHelpersOnNonTTY(t *testing.T) {
 	}
 	if err := p.setTermios(&syscall.Termios{}); err == nil {
 		t.Fatal("setTermios on non-tty should fail")
+	}
+}
+
+// TestIOAfterCloseFailsFast: using a port after Close is a contract
+// violation, but it must fail with EBADF rather than block forever.
+func TestIOAfterCloseFailsFast(t *testing.T) {
+	p := newPort() // fd == -1, as after Close
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		if _, err := p.Read(make([]byte, 1)); !errors.Is(err, syscall.EBADF) {
+			t.Errorf("Read after close: want EBADF, got %v", err)
+		}
+		if _, err := p.Write([]byte("x")); !errors.Is(err, syscall.EBADF) {
+			t.Errorf("Write after close: want EBADF, got %v", err)
+		}
+	}()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("I/O on a closed port blocked")
 	}
 }
