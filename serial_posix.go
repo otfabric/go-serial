@@ -7,6 +7,7 @@ package serial
 import (
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"syscall"
 	"time"
@@ -131,7 +132,13 @@ func (p *port) Read(b []byte) (n int, err error) {
 	}
 	n, err = syscall.Read(fd, b)
 	if err != nil {
+		// syscall.Read reports -1 on failure; io.Reader needs 0 <= n.
+		n = 0
 		err = fmt.Errorf("serial: read: %w", err)
+	} else if n == 0 && len(b) > 0 {
+		// select reported the device readable but it has no data: the
+		// other end hung up (an unplugged USB adapter, a closed pty).
+		err = io.EOF
 	}
 	return
 }
