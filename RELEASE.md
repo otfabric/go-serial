@@ -1,5 +1,61 @@
 # go-serial Releases
 
+## v0.1.8
+
+**Date:** 2026-10-29
+**Previous release:** v0.1.7
+
+## Summary
+
+Patch release: two POSIX I/O bugs found by a new chaos test suite are fixed,
+the module is `go vet`/lint clean on every supported platform (NetBSD now
+compiles), and library test coverage rises from 77% to 96%.
+
+## Changes
+
+### Fixes
+
+- **`Read` on file descriptors ≥ 1024.** `Read` waited with `select(2)` and a
+  fixed 1024-entry `fd_set`. In a busy process the port can land above that
+  limit; `Read` then returned a spurious `io.EOF` at once and the kernel
+  accessed memory past the set. Linux and the BSDs now wait with
+  `poll`/`ppoll`, which has no descriptor limit. macOS keeps `select` (its
+  `poll` does not support ttys) and rejects such descriptors with an error.
+- **`Write` under backpressure.** The descriptor is non-blocking, so once
+  the tty output buffer filled, `Write` returned a short count with a nil
+  error, or `n == -1` with `EAGAIN` — silent data loss. `Write` now waits
+  until the driver accepts more data and returns only when every byte is
+  written or an error occurs.
+- **Timeouts under signals.** Interrupted waits (`EINTR`) retry against one
+  deadline, so signals no longer shorten or extend a `Read` timeout.
+  Spurious `EAGAIN` wakeups in `Read` are retried.
+- **I/O after `Close`** fails with `EBADF` instead of blocking.
+- **NetBSD** builds again (`FdSet` field and termios speed types).
+- **Windows:** `CloseHandle` result checked on failed open; a port name
+  containing NUL returns an error instead of panicking; `SyscallN` replaces
+  the deprecated `Syscall`.
+
+### Tests
+
+- POSIX error-path tests: termios options, failed opens, close, read and
+  write errors. Coverage 77.1% → 96.1%.
+- Chaos suite (`TestChaos*`), seeded and reproducible via
+  `SERIAL_CHAOS_SEED`, scalable via `SERIAL_CHAOS_ITERATIONS`: fragmenting
+  full-duplex relay, random hangups, signal storms during reads, ports above
+  `FD_SETSIZE`, write backpressure, random configs, concurrent open/close
+  churn with an fd-leak check, termios restore.
+- Fuzz targets for parsers, text round-trips, `Validate`, and agreement
+  between `Validate` and the termios layer.
+- `TestReadWrite` moved to the POSIX-only test file so Windows test builds
+  compile.
+
+### Unchanged
+
+- The API. POSIX `Write` still has no timeout; it now blocks until all data
+  is written, as documented.
+
+---
+
 ## v0.1.7
 
 **Date:** 2026-10-28

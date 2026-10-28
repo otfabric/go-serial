@@ -46,11 +46,6 @@ func init() {
 	}
 }
 
-// syscallSelect is a wrapper for syscall.Select that only returns error.
-func syscallSelect(n int, r *syscall.FdSet, w *syscall.FdSet, e *syscall.FdSet, tv *syscall.Timeval) error {
-	return syscall.Select(n, r, w, e, tv)
-}
-
 // tcsetattr sets terminal file descriptor parameters.
 // See man tcsetattr(3).
 func tcsetattr(fd int, termios *syscall.Termios) (err error) {
@@ -80,23 +75,4 @@ func tcgetattr(fd int, termios *syscall.Termios) (err error) {
 		return
 	}
 	return
-}
-
-// fdget returns index and offset of fd in fds.
-func fdget(fd int, fds *syscall.FdSet) (index, offset int) {
-	index = fd / (syscall.FD_SETSIZE / len(fds.X__fds_bits)) % len(fds.X__fds_bits)
-	offset = fd % (syscall.FD_SETSIZE / len(fds.X__fds_bits))
-	return
-}
-
-// fdset implements FD_SET macro.
-func fdset(fd int, fds *syscall.FdSet) {
-	idx, pos := fdget(fd, fds)
-	fds.X__fds_bits[idx] = 1 << uint(pos)
-}
-
-// fdisset implements FD_ISSET macro.
-func fdisset(fd int, fds *syscall.FdSet) bool {
-	idx, pos := fdget(fd, fds)
-	return fds.X__fds_bits[idx]&(1<<uint(pos)) != 0
 }
