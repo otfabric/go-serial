@@ -27,6 +27,11 @@ Close restores prior termios/DCB settings when possible, then closes the
 fd/handle. Closing may cause a blocked Read/Write to return an error on some
 platforms, but that is not a synchronized cancel contract — prefer a finite
 Timeout for Read, and avoid Close while I/O is in flight.
+
+On POSIX systems Read follows the io.Reader contract when the line goes
+away: it returns n == 0 with io.EOF once the other end hung up (an
+unplugged USB adapter, a closed pseudo-terminal) or with the OS error
+(for example EIO), never a negative count.
 */
 package serial
 

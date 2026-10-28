@@ -1,5 +1,39 @@
 # go-serial Releases
 
+## v0.1.7
+
+**Date:** 2026-10-28
+**Previous release:** v0.1.6
+
+## Summary
+
+Patch release: POSIX `Read` now honours the `io.Reader` contract when a
+read fails or the device goes away. Found while building go-canbus's slcan
+transport, which drives USB CAN adapters through this package.
+
+## Changes
+
+### Fixes
+
+- **`Read` never returns a negative count.** A failing `read(2)` used to
+  return `n == -1` with the error; callers doing `buf[:n]` panicked. It now
+  returns `n == 0`.
+- **`Read` reports `io.EOF` after a hangup.** When `select(2)` reports the
+  device readable but `read(2)` returns no data, the other end hung up (an
+  unplugged USB adapter, a closed pseudo-terminal). `Read` used to return
+  `(0, nil)` forever; it now returns `io.EOF`.
+
+### Tests
+
+- **`TestReadAfterHangup`** closes the pseudo-terminal's other end and checks
+  that `Read` ends with an error and `n == 0`. It fails without the fix.
+
+### Unchanged
+
+- Windows behaviour, the API and timeouts.
+
+---
+
 ## v0.1.6
 
 **Date:** 2026-07-30

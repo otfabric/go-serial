@@ -5,9 +5,11 @@
 package serial
 
 import (
+	"errors"
 	"io"
 	"os"
 	"testing"
+	"time"
 )
 
 // setupLoopbackPair returns two serial device paths connected in a loopback pair.
@@ -64,4 +66,42 @@ func openPTY() (master *os.File, slavePath string, err error) {
 		return nil, "", err
 	}
 	return master, slavePath, nil
+}
+
+// TestReadAfterHangup: once the other end of the line goes away, Read
+// reports an error (io.EOF or the OS error) with n == 0 instead of
+// returning n == -1 or (0, nil) forever.
+func TestReadAfterHangup(t *testing.T) {
+	master, slave, err := openPTY()
+	if err != nil {
+		t.Skipf("skip when PTY cannot be created: %v", err)
+	}
+	p, err := Open(&Config{Address: slave, BaudRate: 115200, Timeout: 100 * time.Millisecond})
+	if err != nil {
+		_ = master.Close()
+		t.Fatal(err)
+	}
+	defer func() { _ = p.Close() }()
+	if _, err := master.Write([]byte("x")); err != nil {
+		t.Fatal(err)
+	}
+	buf := make([]byte, 16)
+	n, err := p.Read(buf)
+	if err != nil || n != 1 || buf[0] != 'x' {
+		t.Fatalf("Read = %d, %v; want 1 byte x", n, err)
+	}
+	_ = master.Close()
+	for i := 0; i < 50; i++ {
+		n, err = p.Read(buf)
+		if n < 0 {
+			t.Fatalf("Read returned n = %d", n)
+		}
+		if err != nil && !errors.Is(err, ErrTimeout) {
+			if n != 0 {
+				t.Fatalf("Read = %d, %v after hangup", n, err)
+			}
+			return
+		}
+	}
+	t.Fatalf("Read kept returning (%d, %v) after the other end hung up", n, err)
 }

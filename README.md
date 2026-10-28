@@ -235,6 +235,9 @@ cfg.Parity = serial.ParityNone
   Read/Write to return an error on some platforms, but this is **not** a
   synchronized cancel API (no `CancelIo` / coordinated wakeup). Prefer a finite
   `Timeout` for Read, and avoid `Close` while I/O is in flight.
+- **Hangup** — On POSIX systems, `Read` returns `io.EOF` (or the OS error, such
+  as `EIO`) with `n == 0` once the device goes away, e.g. an unplugged USB
+  adapter; it never returns a negative count.
 
 Package godoc (`serial.go`) restates the same contract.
 
