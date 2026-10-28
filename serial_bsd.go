@@ -46,11 +46,6 @@ func init() {
 	}
 }
 
-// syscallSelect is a wrapper for syscall.Select that only returns error.
-func syscallSelect(n int, r *syscall.FdSet, w *syscall.FdSet, e *syscall.FdSet, tv *syscall.Timeval) error {
-	return syscall.Select(n, r, w, e, tv)
-}
-
 // tcsetattr sets terminal file descriptor parameters.
 // See man tcsetattr(3).
 func tcsetattr(fd int, termios *syscall.Termios) (err error) {

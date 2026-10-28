@@ -227,8 +227,9 @@ cfg.Parity = serial.ParityNone
   and do **not** call `Close` concurrently with `Read`/`Write` (undefined).
 - **Timeouts** — `Config.Timeout` applies to **Read** on all platforms. On
   **Windows**, the same timeout is also applied to Write when `Timeout > 0`.
-  On **POSIX** (Linux/macOS/BSD), Write has no library-applied timeout (blocking
-  `write(2)`). `Timeout == 0` means Read may block indefinitely until data
+  On **POSIX** (Linux/macOS/BSD), Write has no library-applied timeout: it
+  blocks while the driver's output buffer is full and returns only once all
+  bytes are written (or with an error). `Timeout == 0` means Read may block indefinitely until data
   arrives (or the underlying fd/handle is closed by the OS).
 - **Close** — Restores prior termios (POSIX) or DCB/timeouts (Windows) when
   possible, then closes the fd/handle. Closing **may** cause a blocked
@@ -346,6 +347,14 @@ make check       # fmt, tidy, vet, lint, tests, race, coverage
 ```
 
 Tests do not require physical serial hardware. On Linux, macOS, and BSD, **`TestReadWrite`** creates a programmatic PTY loopback via `/dev/ptmx` and exercises open, read, write, and close. The test skips when PTY creation is unavailable (e.g. restricted environments).
+
+**Chaos and fuzz tests** (`TestChaos*`, `Fuzz*`) inject faults over PTYs: random line fragmentation, hangups mid-stream, signal storms during blocking reads, ports above `FD_SETSIZE`, write backpressure, random configs and open/close churn. Each logs its seed; reproduce or scale a run with:
+
+```bash
+SERIAL_CHAOS_SEED=<seed> go test -run TestChaos -v .
+SERIAL_CHAOS_ITERATIONS=10 go test -race -run TestChaos .
+go test -run '^$' -fuzz FuzzConfigValidate -fuzztime 1m .
+```
 
 For a manual socat loopback, set device paths before testing:
 

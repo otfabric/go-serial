@@ -106,50 +106,62 @@ func (p *port) close() {
 
 // Read reads from the serial port. It blocks until data is available or the configured timeout expires.
 func (p *port) Read(b []byte) (n int, err error) {
-	var rfds syscall.FdSet
-
 	fd := p.fd
-	fdset(fd, &rfds)
-
-	var tv *syscall.Timeval
+	var deadline time.Time
 	if p.timeout > 0 {
-		timeout := syscall.NsecToTimeval(p.timeout.Nanoseconds())
-		tv = &timeout
+		deadline = time.Now().Add(p.timeout)
 	}
 	for {
-		// If syscall.Select() returns EINTR (Interrupted system call), retry it
-		if err = syscallSelect(fd+1, &rfds, nil, nil, tv); err == nil {
-			break
+		ready, werr := waitFD(fd, false, deadline)
+		if werr != nil {
+			return 0, fmt.Errorf("serial: wait for data: %w", werr)
 		}
-		if err != syscall.EINTR {
-			err = fmt.Errorf("serial: select: %w", err)
-			return
+		if !ready {
+			return 0, ErrTimeout
 		}
+		n, err = syscall.Read(fd, b)
+		switch {
+		case err == syscall.EAGAIN || err == syscall.EINTR:
+			// Spurious wakeup or interrupted read: wait again within the
+			// same deadline.
+			continue
+		case err != nil:
+			// syscall.Read reports -1 on failure; io.Reader needs 0 <= n.
+			return 0, fmt.Errorf("serial: read: %w", err)
+		case n == 0 && len(b) > 0:
+			// The device was reported readable but has no data: the
+			// other end hung up (an unplugged USB adapter, a closed pty).
+			return 0, io.EOF
+		}
+		return n, nil
 	}
-	if !fdisset(fd, &rfds) {
-		err = ErrTimeout
-		return
-	}
-	n, err = syscall.Read(fd, b)
-	if err != nil {
-		// syscall.Read reports -1 on failure; io.Reader needs 0 <= n.
-		n = 0
-		err = fmt.Errorf("serial: read: %w", err)
-	} else if n == 0 && len(b) > 0 {
-		// select reported the device readable but it has no data: the
-		// other end hung up (an unplugged USB adapter, a closed pty).
-		err = io.EOF
-	}
-	return
 }
 
-// Write writes data to the serial port.
+// Write writes all of b to the serial port, blocking while the driver's
+// output buffer is full. The descriptor is non-blocking (opened with
+// O_NDELAY), so EAGAIN is handled here by waiting for writability rather
+// than surfacing as an error. It returns n < len(b) only with an error,
+// and never a negative n.
 func (p *port) Write(b []byte) (n int, err error) {
-	n, err = syscall.Write(p.fd, b)
-	if err != nil {
-		err = fmt.Errorf("serial: write: %w", err)
+	fd := p.fd
+	for n < len(b) {
+		m, werr := syscall.Write(fd, b[n:])
+		if m > 0 {
+			n += m
+		}
+		switch {
+		case werr == syscall.EAGAIN:
+			if _, err = waitFD(fd, true, time.Time{}); err != nil {
+				return n, fmt.Errorf("serial: write: %w", err)
+			}
+		case werr == syscall.EINTR:
+		case werr != nil:
+			return n, fmt.Errorf("serial: write: %w", werr)
+		case m == 0:
+			return n, fmt.Errorf("serial: write: %w", io.ErrShortWrite)
+		}
 	}
-	return
+	return n, nil
 }
 
 func (p *port) setTermios(termios *syscall.Termios) (err error) {

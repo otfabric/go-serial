@@ -19,8 +19,9 @@ concurrently with Read or Write — that is undefined.
 # Timeouts and Close
 
 Config.Timeout applies to Read on all platforms; Write timeout is honored on
-Windows when Timeout > 0, and is not applied on POSIX (Write is a blocking
-syscall.Write). Timeout == 0 means Read may block indefinitely until data
+Windows when Timeout > 0, and is not applied on POSIX, where Write blocks
+while the driver's output buffer is full and returns once all bytes are
+written or an error occurs. Timeout == 0 means Read may block indefinitely until data
 arrives (or the fd/handle is closed by the OS).
 
 Close restores prior termios/DCB settings when possible, then closes the
