@@ -43,7 +43,7 @@ func (p *port) open(c *Config) (err error) {
 	}
 	defer func() {
 		if err != nil {
-			syscall.CloseHandle(p.handle)
+			_ = syscall.CloseHandle(p.handle)
 			p.handle = syscall.InvalidHandle
 		}
 	}()
@@ -153,8 +153,14 @@ func (p *port) setSerialConfig(c *Config) error {
 }
 
 func newHandle(c *Config) (handle syscall.Handle, err error) {
+	// UTF16PtrFromString rejects addresses containing NUL instead of
+	// panicking like the deprecated StringToUTF16Ptr.
+	name, err := syscall.UTF16PtrFromString(c.Address)
+	if err != nil {
+		return 0, fmt.Errorf("serial: open %q: %w", c.Address, err)
+	}
 	handle, err = syscall.CreateFile(
-		syscall.StringToUTF16Ptr(c.Address),
+		name,
 		syscall.GENERIC_READ|syscall.GENERIC_WRITE,
 		0,                     // mode
 		nil,                   // security
