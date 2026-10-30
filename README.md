@@ -434,6 +434,8 @@ go-serial/
 
 Platform backends are build-tagged (`serial_posix.go`, `serial_windows.go`, …).
 
+Documents: [API.md](API.md), [ARCHITECTURE.md](ARCHITECTURE.md), [ERRORS.md](ERRORS.md), [TESTING.md](TESTING.md), [LIMITATIONS.md](LIMITATIONS.md), [SECURITY.md](SECURITY.md), [CONTRIBUTING.md](CONTRIBUTING.md), [RELEASE.md](RELEASE.md).
+
 </details>
 
 ---
