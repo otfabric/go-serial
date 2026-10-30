@@ -4,8 +4,6 @@ Nothing in this library is certified. The README's comparison and feature statem
 
 ## Known defects
 
-- **macOS: `Cflag` is corrupted by the baud rate.** `newTermios` in [serial_posix.go](serial_posix.go) ORs the speed constant into `Cflag`. On Darwin the constant is the numeric rate, so its bits overlap the mode bits. At 9600 baud with even parity, the default rate of `DefaultConfig`, `Cflag` has `PARODD` and `CSTOPB` set; at 1200 baud it has `CSTOPB` set. At 19200 and 115200 neither bit is set. `TestNewTermiosOptions` fails on macOS for this reason. CI does not see it, because the test jobs run on Linux only.
-- **BSDs: the same code path, not checked.** The BSD backends use the same `Cflag` assignment and were not run.
 - **macOS: `TestChaosOpenCloseChurn` fails intermittently** with an error opening `/dev/ptmx`. The cause has not been established.
 
 ## Not implemented

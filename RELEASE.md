@@ -1,5 +1,30 @@
 # go-serial Releases
 
+## v0.2.0
+
+**Date:** 2026-10-30
+**Previous release:** v0.1.8
+
+## Summary
+
+Fixes the serial mode on macOS and the BSDs.
+
+## Changes
+
+### Fixes
+
+- **Baud rate no longer changes the mode on macOS and the BSDs.** `Open` ORed
+  the speed constant into `Cflag`, where only Linux has a speed field. There
+  the constant is the numeric rate: at 9600 baud `Cflag` had `CSTOPB` (two
+  stop bits) and `PARODD` set, and at 1200 baud `CSTOPB`. The speed now goes
+  in `Ispeed` and `Ospeed` only. Tested on macOS; the BSDs are built, not run.
+
+### Breaking changes
+
+- None.
+
+---
+
 ## v0.1.8
 
 **Date:** 2026-10-29
