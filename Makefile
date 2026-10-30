@@ -71,3 +71,13 @@ check: fmt tidy vet lint lint-ci vuln test test-race coverage ## Run core releas
 clean: ## Clean test cache and coverage artifacts
 	$(GO) clean -testcache
 	$(MAKE) coverage-clean
+
+FUZZTIME ?= 10s
+
+.PHONY: fuzz
+fuzz: ## Run every Fuzz target for FUZZTIME (discovered, never listed)
+	@for pkg in $$($(GO) list ./...); do \
+		for t in $$($(GO) test -list '^Fuzz' $$pkg | grep '^Fuzz'); do \
+			$(GO) test -run '^$$' -fuzz "^$$t$$" -fuzztime $(FUZZTIME) $$pkg || exit 1; \
+		done; \
+	done

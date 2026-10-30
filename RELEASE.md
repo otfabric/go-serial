@@ -218,7 +218,9 @@ Patch release: tooling, tests, CI, and small correctness fixes. No intentional A
 
 ---
 
-## v0.1.0 (first release)
+## v0.1.0
+
+First release.
 
 Initial public release of `github.com/otfabric/go-serial`, a generic cross-platform Go library for serial (UART) communication over RS-232 and RS-485.
 
