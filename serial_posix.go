@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"runtime"
 	"syscall"
 	"time"
 	"unsafe"
@@ -206,7 +207,12 @@ func newTermios(c *Config) (termios *syscall.Termios, err error) {
 			return
 		}
 	}
-	termios.Cflag |= flag
+	// Linux keeps the speed in Cflag (CBAUD), as a code. On Darwin and the
+	// BSDs the constant is the numeric rate, whose bits are mode bits there:
+	// the speed goes in Ispeed and Ospeed only.
+	if runtime.GOOS == "linux" {
+		termios.Cflag |= flag
+	}
 	// Input baud.
 	cfSetIspeed(termios, flag)
 	// Output baud.

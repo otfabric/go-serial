@@ -13,6 +13,22 @@ import (
 	"time"
 )
 
+// TestNewTermiosBaudLeavesModeBits checks that no baud rate changes the
+// character size, stop bits or parity: on Darwin and the BSDs the speed
+// constant is the numeric rate, and 9600 has the bits of CSTOPB and PARODD.
+func TestNewTermiosBaudLeavesModeBits(t *testing.T) {
+	const mode = uint32(syscall.CSIZE | syscall.CSTOPB | syscall.PARENB | syscall.PARODD)
+	for rate := range baudRates {
+		tio, err := newTermios(&Config{BaudRate: BaudRate(rate)})
+		if err != nil {
+			t.Fatalf("newTermios(%d): %v", rate, err)
+		}
+		if got := uint32(tio.Cflag) & mode; got != uint32(syscall.CS8) {
+			t.Errorf("%d baud: mode bits of Cflag = %#x, want %#x", rate, got, uint32(syscall.CS8))
+		}
+	}
+}
+
 func TestNewTermiosOptions(t *testing.T) {
 	tests := []struct {
 		name      string
