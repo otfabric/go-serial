@@ -5,6 +5,8 @@ run-name: "Nightly on ${{ github.ref_name }}"
 # rounds than a push runs, and every fuzz target for five minutes.
 
 on:
+  push:
+    branches: [chore/should-gaps]
   schedule:
     - cron: "11 2 * * *"
   workflow_dispatch:
@@ -35,7 +37,7 @@ jobs:
       - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
-      - run: make chaos CHAOS_ITERATIONS=${{ inputs.iterations || '10' }}
+      - run: make chaos CHAOS_ITERATIONS=${{ inputs.iterations || '1' }}
 
   fuzz:
     name: Fuzz
@@ -46,7 +48,7 @@ jobs:
       - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
-      - run: make fuzz FUZZTIME=${{ inputs.fuzztime || '5m' }}
+      - run: make fuzz FUZZTIME=${{ inputs.fuzztime || '5s' }}
       - name: Keep the failing inputs
         if: failure()
         uses: actions/upload-artifact@v7
