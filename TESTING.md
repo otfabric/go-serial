@@ -9,6 +9,7 @@
 | Chaos, long | `make chaos` (`CHAOS_ITERATIONS`, default 10) | A PTY. Nightly |
 | Race detector | `make test-race` | As above |
 | Coverage | `make coverage`, `make coverage-check` | As above |
+| Per-package floor | `make coverage-pkg-check` | As above. `COVER_PKG_MIN` 90; lowest measured in CI 96.1 %, the root package |
 | Fuzz | `make fuzz` (`FUZZTIME=1m make fuzz`) | None |
 | Benchmarks | `make bench` | The repository has no `Benchmark` functions yet, so this runs nothing |
 | Cross-compilation | `make cross` | None. Builds only; runs no test |

@@ -6,9 +6,9 @@ GO ?= go
 PKGS := ./...
 COVER_PKGS := $(shell $(GO) list ./... | grep -v '/example$$')
 COVER_MIN := 90
-# Per-package floor (TEST-012), checked by coverage-pkg-check. Measured with
-# the coverage of the CI job that has the prerequisites; see TESTING.md.
-COVER_PKG_MIN := 0
+# Per-package floor (TEST-012), checked by coverage-pkg-check. Lowest package
+# measured in CI: 96.1 % (the root package). See TESTING.md.
+COVER_PKG_MIN := 90
 # ci.yml cross-build matrix, plus netbsd and openbsd, which have backends here.
 CROSS_PLATFORMS := linux/amd64 linux/arm linux/arm64 darwin/amd64 darwin/arm64 windows/amd64 windows/arm64 freebsd/amd64 freebsd/arm64 netbsd/amd64 openbsd/amd64
 
