@@ -123,7 +123,7 @@ func TestOpenNotATerminal(t *testing.T) {
 func TestOpenRS485Unsupported(t *testing.T) {
 	master, slave, err := openPTY()
 	if err != nil {
-		t.Skipf("skip when PTY cannot be created: %v", err)
+		skipNoPTY(t, err)
 	}
 	defer func() { _ = master.Close() }()
 
@@ -165,7 +165,7 @@ func TestCloseIdempotent(t *testing.T) {
 
 	master, slave, err := openPTY()
 	if err != nil {
-		t.Skipf("skip when PTY cannot be created: %v", err)
+		skipNoPTY(t, err)
 	}
 	defer func() { _ = master.Close() }()
 	port, err := Open(&Config{Address: slave, BaudRate: 9600})

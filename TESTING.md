@@ -5,6 +5,8 @@
 | Tier | Command | Prerequisites |
 |---|---|---|
 | Unit, loopback and chaos | `make test` | None. PTY tests skip if a PTY cannot be created |
+| PTY required | `make test-pty` | A PTY: its absence fails the run. CI runs this on Linux and macOS |
+| Chaos, long | `make chaos` (`CHAOS_ITERATIONS`, default 10) | A PTY. Nightly |
 | Race detector | `make test-race` | As above |
 | Coverage | `make coverage`, `make coverage-check` | As above |
 | Fuzz | `make fuzz` (`FUZZTIME=1m make fuzz`) | None |
@@ -18,6 +20,7 @@ There is no `e2e` target: the library has no separate end-to-end suite and no pe
 
 | Variable | Effect |
 |---|---|
+| `SERIAL_REQUIRE_PTY` | `1` fails PTY tests instead of skipping them |
 | `SERIAL_CHAOS_SEED` | Fixes the seed of the chaos tests. Each run logs the seed it used |
 | `SERIAL_CHAOS_ITERATIONS` | Multiplies the chaos rounds |
 | `SERIAL_LOOPBACK_PTY1`, `SERIAL_LOOPBACK_PTY2` | Device paths of an external pair (for example from `socat`) for `TestReadWrite`, instead of the PTY it creates |
@@ -29,7 +32,9 @@ SERIAL_CHAOS_SEED=<seed> go test -run TestChaos -v .
 SERIAL_CHAOS_ITERATIONS=10 go test -race -run TestChaos .
 ```
 
-No `*_REQUIRE_*` switch exists yet, so a job cannot turn a missing PTY into a failure: the tests skip.
+`SERIAL_REQUIRE_PTY=1` turns a missing PTY, or an unusable external loopback pair, into a failure instead of a skip (`make test-pty`, `make chaos`). The remaining skips are not prerequisites of a CI job: `/dev/null` missing, `RLIMIT_NOFILE` too low for the descriptor test, or a kernel that accepts the RS485 ioctl on a PTY.
+
+.github/workflows/nightly.yml runs the chaos tests with more rounds on Linux and macOS and every fuzz target for five minutes; failing inputs are uploaded as an artifact.
 
 ## What runs where
 

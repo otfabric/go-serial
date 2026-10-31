@@ -73,3 +73,19 @@ jobs:
         with:
           go-version-file: go.mod
       - run: make coverage-pkg-check
+
+  # A runner has a PTY: SERIAL_REQUIRE_PTY=1 turns a missing one into a
+  # failure, so the real-tty tests cannot pass as skips.
+  pty:
+    name: PTY tests (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - run: make test-pty

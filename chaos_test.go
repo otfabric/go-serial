@@ -94,12 +94,12 @@ func TestChaosFullDuplexFragmentingRelay(t *testing.T) {
 	for round := 0; round < chaosScale(t, 3); round++ {
 		m1, s1, err := openPTY()
 		if err != nil {
-			t.Skipf("skip when PTY cannot be created: %v", err)
+			skipNoPTY(t, err)
 		}
 		m2, s2, err := openPTY()
 		if err != nil {
 			_ = m1.Close()
-			t.Skipf("skip when PTY cannot be created: %v", err)
+			skipNoPTY(t, err)
 		}
 		cfg := Config{BaudRate: Baud115200, Timeout: 2 * time.Second}
 		cfg.Address = s1
@@ -198,7 +198,7 @@ func TestChaosRandomHangup(t *testing.T) {
 	for round := 0; round < chaosScale(t, 25); round++ {
 		master, slave, err := openPTY()
 		if err != nil {
-			t.Skipf("skip when PTY cannot be created: %v", err)
+			skipNoPTY(t, err)
 		}
 		p, err := Open(&Config{Address: slave, Timeout: 20 * time.Millisecond})
 		if err != nil {
@@ -289,7 +289,7 @@ func TestChaosRandomConfigs(t *testing.T) {
 	for round := 0; round < chaosScale(t, 300); round++ {
 		master, slave, err := openPTY()
 		if err != nil {
-			t.Skipf("skip when PTY cannot be created: %v", err)
+			skipNoPTY(t, err)
 		}
 		cfg := randomChaosConfig(r, slave)
 		if r.Intn(15) == 0 {
@@ -420,7 +420,7 @@ func TestChaosTermiosRestoredAfterAbuse(t *testing.T) {
 	for round := 0; round < chaosScale(t, 20); round++ {
 		master, slave, err := openPTY()
 		if err != nil {
-			t.Skipf("skip when PTY cannot be created: %v", err)
+			skipNoPTY(t, err)
 		}
 		// Keep the slave open independently so its termios survives
 		// between the port's open and close and can be inspected.
@@ -468,7 +468,7 @@ func TestChaosWriteBackpressure(t *testing.T) {
 	r := chaosRand(t)
 	master, slave, err := openPTY()
 	if err != nil {
-		t.Skipf("skip when PTY cannot be created: %v", err)
+		skipNoPTY(t, err)
 	}
 	defer func() { _ = master.Close() }()
 	p, err := Open(&Config{Address: slave})
