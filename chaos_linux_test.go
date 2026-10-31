@@ -61,7 +61,7 @@ func readOnLockedThread(p Port, buf []byte) (tid <-chan int, result <-chan [2]an
 func TestChaosSignalStormTimeout(t *testing.T) {
 	master, slave, err := openPTY()
 	if err != nil {
-		t.Skipf("skip when PTY cannot be created: %v", err)
+		skipNoPTY(t, err)
 	}
 	defer func() { _ = master.Close() }()
 	const timeout = 250 * time.Millisecond
@@ -93,7 +93,7 @@ func TestChaosSignalStormTimeout(t *testing.T) {
 func TestChaosSignalStormBlockingRead(t *testing.T) {
 	master, slave, err := openPTY()
 	if err != nil {
-		t.Skipf("skip when PTY cannot be created: %v", err)
+		skipNoPTY(t, err)
 	}
 	defer func() { _ = master.Close() }()
 	p, err := Open(&Config{Address: slave})
@@ -154,7 +154,7 @@ func TestChaosHighFileDescriptor(t *testing.T) {
 	}
 	master, slave, err := openPTY()
 	if err != nil {
-		t.Skipf("skip when PTY cannot be created: %v", err)
+		skipNoPTY(t, err)
 	}
 	defer func() { _ = master.Close() }()
 	p, err := Open(&Config{Address: slave, Timeout: 150 * time.Millisecond})

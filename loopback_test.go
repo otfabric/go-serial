@@ -6,6 +6,7 @@ package serial
 
 import (
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"testing"
@@ -20,7 +21,7 @@ func setupLoopbackPair(t *testing.T) (path1, path2 string, cleanup func()) {
 	if p1, p2 := os.Getenv("SERIAL_LOOPBACK_PTY1"), os.Getenv("SERIAL_LOOPBACK_PTY2"); p1 != "" && p2 != "" {
 		for _, p := range []string{p1, p2} {
 			if _, err := os.Stat(p); err != nil {
-				t.Skipf("loopback path %q unavailable: %v", p, err)
+				skipNoPTY(t, fmt.Errorf("loopback path %q unavailable: %w", p, err))
 			}
 		}
 		return p1, p2, func() {}
@@ -28,12 +29,12 @@ func setupLoopbackPair(t *testing.T) (path1, path2 string, cleanup func()) {
 
 	m1, s1, err := openPTY()
 	if err != nil {
-		t.Skipf("skip when PTY cannot be created: %v", err)
+		skipNoPTY(t, err)
 	}
 	m2, s2, err := openPTY()
 	if err != nil {
 		_ = m1.Close()
-		t.Skipf("skip when PTY cannot be created: %v", err)
+		skipNoPTY(t, err)
 	}
 
 	done1 := make(chan struct{})
@@ -74,7 +75,7 @@ func openPTY() (master *os.File, slavePath string, err error) {
 func TestReadAfterHangup(t *testing.T) {
 	master, slave, err := openPTY()
 	if err != nil {
-		t.Skipf("skip when PTY cannot be created: %v", err)
+		skipNoPTY(t, err)
 	}
 	p, err := Open(&Config{Address: slave, BaudRate: 115200, Timeout: 100 * time.Millisecond})
 	if err != nil {
@@ -113,7 +114,7 @@ func TestReadWrite(t *testing.T) {
 	config1 := Config{Address: pty1}
 	port1, err := Open(&config1)
 	if err != nil {
-		t.Skipf("skip when no loopback serial available: %v", err)
+		skipNoPTY(t, err)
 	}
 	defer func() { _ = port1.Close() }()
 
@@ -126,7 +127,7 @@ func TestReadWrite(t *testing.T) {
 	}
 	port2, err := Open(&config2)
 	if err != nil {
-		t.Skipf("skip when no loopback serial available: %v", err)
+		skipNoPTY(t, err)
 	}
 	defer func() { _ = port2.Close() }()
 

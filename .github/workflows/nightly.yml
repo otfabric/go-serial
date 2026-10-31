@@ -1,0 +1,56 @@
+name: Nightly
+run-name: "Nightly on ${{ github.ref_name }}"
+
+# The extended tier: the chaos tests over pseudo-terminals with many more
+# rounds than a push runs, and every fuzz target for five minutes.
+
+on:
+  schedule:
+    - cron: "11 2 * * *"
+  workflow_dispatch:
+    inputs:
+      iterations:
+        description: Chaos round multiplier
+        required: false
+        default: "10"
+      fuzztime:
+        description: Time per fuzz target
+        required: false
+        default: 5m
+
+permissions:
+  contents: read
+
+jobs:
+  chaos:
+    name: Chaos (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - run: make chaos CHAOS_ITERATIONS=${{ inputs.iterations || '10' }}
+
+  fuzz:
+    name: Fuzz
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - run: make fuzz FUZZTIME=${{ inputs.fuzztime || '5m' }}
+      - name: Keep the failing inputs
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: fuzz-failures
+          path: "**/testdata/fuzz/"
+          if-no-files-found: ignore
