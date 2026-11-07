@@ -12,7 +12,10 @@ COVER_PKG_MIN := 90
 # ci.yml cross-build matrix, plus netbsd and openbsd, which have backends here.
 CROSS_PLATFORMS := linux/amd64 linux/arm linux/arm64 darwin/amd64 darwin/arm64 windows/amd64 windows/arm64 freebsd/amd64 freebsd/arm64 netbsd/amd64 openbsd/amd64
 
-.PHONY: help test test-pty test-race vet lint vuln fmt bench coverage coverage-check coverage-pkg-check coverage-html coverage-clean cross tidy verify check clean
+# docsync release of docs-check (DOC-008).
+DOCSYNC_VERSION := v0.2.0
+
+.PHONY: help test test-pty test-race vet lint vuln fmt bench coverage coverage-check coverage-pkg-check coverage-html coverage-clean cross tidy verify check clean docs-check
 
 help: ## Show available targets
 	@awk 'BEGIN {FS = ":.*## "}; /^[a-zA-Z0-9_.-]+:.*## / {printf "%-16s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -90,7 +93,11 @@ tidy: ## Tidy module files
 verify: tidy ## Tidy and ensure no diff (like CI)
 	@git diff --exit-code || (echo "run 'make tidy' and commit" && exit 1)
 
-check: fmt tidy vet lint lint-ci vuln test test-race coverage-check coverage-pkg-check ## Run core release checks
+check: fmt tidy vet lint lint-ci vuln test test-race coverage-check coverage-pkg-check docs-check ## Run core release checks
+
+# The documents against the code (DOC-008): docsync, as docs-check.yml runs it.
+docs-check: ## Check that the documents agree with the code (docsync)
+	@go run github.com/otfabric/docsync@$(DOCSYNC_VERSION) check .
 
 clean: ## Clean test cache and coverage artifacts
 	$(GO) clean -testcache
