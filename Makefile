@@ -13,7 +13,7 @@ COVER_PKG_MIN := 90
 CROSS_PLATFORMS := linux/amd64 linux/arm linux/arm64 darwin/amd64 darwin/arm64 windows/amd64 windows/arm64 freebsd/amd64 freebsd/arm64 netbsd/amd64 openbsd/amd64
 
 # docsync release of docs-check (DOC-008).
-DOCSYNC_VERSION := v0.2.0
+DOCSYNC_VERSION := v0.3.0
 
 .PHONY: help test test-pty test-race vet lint vuln fmt bench coverage coverage-check coverage-pkg-check coverage-html coverage-clean cross tidy verify check clean docs-check
 
