@@ -5,6 +5,7 @@
 package serial
 
 import (
+	"math"
 	"syscall"
 	"time"
 )
@@ -27,6 +28,9 @@ const (
 // no FD_SETSIZE limit, so ports opened at high descriptor numbers work.
 // d < 0 waits indefinitely.
 func waitFDOnce(fd int, write bool, d time.Duration) (bool, error) {
+	if fd < 0 || fd > math.MaxInt32 {
+		return false, syscall.EBADF
+	}
 	pfd := pollFd{fd: int32(fd), events: pollIn}
 	if write {
 		pfd.events = pollOut

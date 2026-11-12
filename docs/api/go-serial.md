@@ -27,6 +27,12 @@ On POSIX systems Read follows the io.Reader contract when the line goes away: it
 ## Constants
 
 ```go
+const MaxRS485Delay = time.Duration(math.MaxUint32) * time.Millisecond
+```
+
+MaxRS485Delay is the largest RS485Config.DelayRtsBeforeSend or DelayRtsAfterSend that Validate accepts. The kernel takes the delays as 32-bit millisecond counts.
+
+```go
 const NoTimeout time.Duration = 0
 ```
 

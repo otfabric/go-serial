@@ -22,7 +22,7 @@ jobs:
       coverage-min: "90"
       fuzz-time: 10s
       codecov-name: go-serial
-      go-versions: '["1.23", "1.24", "1.25", "1.26"]'
+      go-versions: '["1.26", "1.27"]'
     secrets: inherit
 
   cross-build:
@@ -52,10 +52,10 @@ jobs:
           - goos: freebsd
             goarch: arm64
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-go@v6
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
-          go-version: "1.23"
+          go-version-file: go.mod
           cache: true
       - name: Build
         env:
@@ -71,8 +71,8 @@ jobs:
     name: Per-package coverage
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-go@v6
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
       - run: make coverage-pkg-check
@@ -87,8 +87,8 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest]
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-go@v6
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
       - run: make test-pty

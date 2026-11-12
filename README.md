@@ -1,6 +1,6 @@
 # go-serial — Cross-Platform Serial Port (UART, RS-232 & RS-485) Library for Go (Golang)
 
-[![Go Version](https://img.shields.io/badge/Go-1.23%2B-00ADD8?style=flat&logo=go)](https://go.dev/)
+[![Go Version](https://img.shields.io/badge/Go-1.26%2B-00ADD8?style=flat&logo=go)](https://go.dev/)
 [![Go Reference](https://pkg.go.dev/badge/github.com/otfabric/go-serial.svg)](https://pkg.go.dev/github.com/otfabric/go-serial)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![CI Status](https://github.com/otfabric/go-serial/actions/workflows/ci.yml/badge.svg)](https://github.com/otfabric/go-serial/actions/workflows/ci.yml)
@@ -37,7 +37,7 @@ If you are looking for a maintained alternative to [goburrow/serial](https://git
 go get github.com/otfabric/go-serial
 ```
 
-Requires **Go 1.23** or later.
+Requires **Go 1.26** or later.
 
 Open `/dev/ttyUSB0` at the default 9600 8N1 and write some bytes:
 

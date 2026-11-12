@@ -6,6 +6,7 @@ import (
 	"errors"
 	"runtime"
 	"testing"
+	"time"
 )
 
 // testPortPath returns a fake port path for tests that don't open the device.
@@ -58,6 +59,9 @@ func TestConfigValidate(t *testing.T) {
 		{"negative timeout", &Config{Address: "/dev/tty0", Timeout: -1}, false},
 		{"RS485 negative delay before", &Config{Address: "/dev/tty0", RS485: RS485Config{Enabled: true, DelayRtsBeforeSend: -1}}, false},
 		{"RS485 negative delay after", &Config{Address: "/dev/tty0", RS485: RS485Config{Enabled: true, DelayRtsAfterSend: -1}}, false},
+		{"RS485 max delay before", &Config{Address: "/dev/tty0", RS485: RS485Config{Enabled: true, DelayRtsBeforeSend: MaxRS485Delay}}, true},
+		{"RS485 delay before too large", &Config{Address: "/dev/tty0", RS485: RS485Config{Enabled: true, DelayRtsBeforeSend: MaxRS485Delay + time.Millisecond}}, false},
+		{"RS485 delay after too large", &Config{Address: "/dev/tty0", RS485: RS485Config{Enabled: true, DelayRtsAfterSend: MaxRS485Delay + time.Millisecond}}, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -248,9 +252,12 @@ func TestParseDataBits(t *testing.T) {
 			t.Errorf("ParseDataBits(%d) = %v", n, d)
 		}
 	}
-	_, err := ParseDataBits(4)
-	if err == nil || !errors.Is(err, ErrInvalidConfig) {
-		t.Errorf("ParseDataBits(4): want ErrInvalidConfig, got %v", err)
+	// 264 and -248 truncate to 8 as uint8; they must still be rejected.
+	for _, n := range []int{4, 0, 264, 256 + 5, -248} {
+		_, err := ParseDataBits(n)
+		if err == nil || !errors.Is(err, ErrInvalidConfig) {
+			t.Errorf("ParseDataBits(%d): want ErrInvalidConfig, got %v", n, err)
+		}
 	}
 }
 
@@ -264,9 +271,12 @@ func TestParseStopBits(t *testing.T) {
 			t.Errorf("ParseStopBits(%d) = %v", n, s)
 		}
 	}
-	_, err := ParseStopBits(3)
-	if err == nil || !errors.Is(err, ErrInvalidConfig) {
-		t.Errorf("ParseStopBits(3): want ErrInvalidConfig, got %v", err)
+	// 257 and 258 truncate to 1 and 2 as uint8; they must still be rejected.
+	for _, n := range []int{3, 0, 257, 258, -255} {
+		_, err := ParseStopBits(n)
+		if err == nil || !errors.Is(err, ErrInvalidConfig) {
+			t.Errorf("ParseStopBits(%d): want ErrInvalidConfig, got %v", n, err)
+		}
 	}
 }
 

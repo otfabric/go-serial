@@ -1,5 +1,32 @@
 # go-serial Releases
 
+## v0.3.0
+
+**Date:** 2026-11-12
+**Previous release:** v0.2.1
+
+## Summary
+
+Requires Go 1.26 (the OT Fabric floor) and rejects out-of-range values that were silently truncated.
+
+## Changes
+
+### Fixes
+
+- `ParseDataBits` and `ParseStopBits` checked the value after converting it to `uint8`, so out-of-range input such as `ParseDataBits(264)` was accepted as 8. They now check the `int` first.
+- `Config.Validate` rejects RS-485 RTS delays above the new `MaxRS485Delay` (2^32-1 ms), which the 32-bit kernel field cannot hold; `Open` refuses them too. Before, they wrapped around.
+- The poll-based wait rejects a file descriptor outside the `int32` range with `EBADF` instead of truncating it.
+
+### Added
+
+- `MaxRS485Delay`.
+
+### Breaking changes
+
+- `go.mod` now says `go 1.26.0`; dependants need Go 1.26 or later. CI tests Go 1.26 and 1.27, and the cross-build uses the `go.mod` version.
+
+---
+
 ## v0.2.1
 
 **Date:** 2026-10-31
