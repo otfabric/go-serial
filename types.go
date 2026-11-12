@@ -139,8 +139,8 @@ func (s *StopBits) UnmarshalText(text []byte) error {
 
 // ParseDataBits converts an int (e.g. from a CLI flag) to DataBits. Accepts 5, 6, 7, 8.
 func ParseDataBits(n int) (DataBits, error) {
-	switch DataBits(n) {
-	case DataBits5, DataBits6, DataBits7, DataBits8:
+	switch n {
+	case 5, 6, 7, 8:
 		return DataBits(n), nil
 	default:
 		return 0, fmt.Errorf("serial: data bits must be 5, 6, 7, or 8 (got %d): %w", n, ErrInvalidConfig)
@@ -149,8 +149,8 @@ func ParseDataBits(n int) (DataBits, error) {
 
 // ParseStopBits converts an int (e.g. from a CLI flag) to StopBits. Accepts 1 or 2.
 func ParseStopBits(n int) (StopBits, error) {
-	switch StopBits(n) {
-	case StopBits1, StopBits2:
+	switch n {
+	case 1, 2:
 		return StopBits(n), nil
 	default:
 		return 0, fmt.Errorf("serial: stop bits must be 1 or 2 (got %d): %w", n, ErrInvalidConfig)

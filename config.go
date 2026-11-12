@@ -2,7 +2,10 @@
 
 package serial
 
-import "time"
+import (
+	"math"
+	"time"
+)
 
 // Config describes how a serial port should be opened and configured.
 // Zero-value policy: Open normalizes before use. BaudRate(0)→9600, DataBits(0)→8, StopBits(0)→1, Parity("")→none.
@@ -22,6 +25,11 @@ type Config struct {
 	// RS-485 options. Ignored unless Enabled is true.
 	RS485 RS485Config
 }
+
+// MaxRS485Delay is the largest RS485Config.DelayRtsBeforeSend or
+// DelayRtsAfterSend that Validate accepts. The kernel takes the delays as
+// 32-bit millisecond counts.
+const MaxRS485Delay = time.Duration(math.MaxUint32) * time.Millisecond
 
 // RS485Config holds platform-independent RS-485 options. Ignored unless Enabled is true.
 // Support depends on the OS and driver (e.g. Linux with RS485-capable serial drivers).
@@ -75,6 +83,12 @@ func (c Config) Validate() error {
 		}
 		if c.RS485.DelayRtsAfterSend < 0 {
 			return &ConfigError{Field: "RS485.DelayRtsAfterSend", Value: c.RS485.DelayRtsAfterSend, Reason: "cannot be negative", Err: ErrInvalidConfig}
+		}
+		if c.RS485.DelayRtsBeforeSend > MaxRS485Delay {
+			return &ConfigError{Field: "RS485.DelayRtsBeforeSend", Value: c.RS485.DelayRtsBeforeSend, Reason: "exceeds MaxRS485Delay", Err: ErrInvalidConfig}
+		}
+		if c.RS485.DelayRtsAfterSend > MaxRS485Delay {
+			return &ConfigError{Field: "RS485.DelayRtsAfterSend", Value: c.RS485.DelayRtsAfterSend, Reason: "exceeds MaxRS485Delay", Err: ErrInvalidConfig}
 		}
 	}
 	return nil

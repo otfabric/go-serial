@@ -270,6 +270,10 @@ func enableRS485(fd int, config *RS485Config) error {
 	if !config.Enabled {
 		return nil
 	}
+	if config.DelayRtsBeforeSend < 0 || config.DelayRtsBeforeSend > MaxRS485Delay ||
+		config.DelayRtsAfterSend < 0 || config.DelayRtsAfterSend > MaxRS485Delay {
+		return fmt.Errorf("serial: RS485 delay out of range: %w", ErrInvalidConfig)
+	}
 	rs485 := rs485IoctlOpts{
 		rs485Enabled,
 		uint32(config.DelayRtsBeforeSend / time.Millisecond),
