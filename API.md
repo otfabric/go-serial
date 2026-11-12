@@ -44,11 +44,11 @@ Concurrency, timeout and `Close` rules are stated once, in the package documenta
 | `StopBits` | `StopBits` | 1 | 1, 2 |
 | `Parity` | `Parity` | `ParityNone` | `N`, `E`, `O` |
 | `Timeout` | `time.Duration` | `NoTimeout` | Not negative |
-| `RS485` | `RS485Config` | disabled | Delays not negative, when enabled |
+| `RS485` | `RS485Config` | disabled | Delays from 0 to `MaxRS485Delay`, when enabled |
 
 Methods: `Normalized()` returns the config with the defaults filled in, and `Validate()` returns a `*ConfigError` wrapping `ErrInvalidConfig`.
 
-`RS485Config` has `Enabled`, `DelayRtsBeforeSend`, `DelayRtsAfterSend`, `RtsHighDuringSend`, `RtsHighAfterSend` and `RxDuringTx`.
+`RS485Config` has `Enabled`, `DelayRtsBeforeSend`, `DelayRtsAfterSend`, `RtsHighDuringSend`, `RtsHighAfterSend` and `RxDuringTx`. `MaxRS485Delay` (2^32-1 ms) is the largest delay `Validate` accepts; the kernel holds the delays as 32-bit millisecond counts.
 
 ### Typed settings
 
