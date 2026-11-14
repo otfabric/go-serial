@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"runtime"
+	"sync"
 	"syscall"
 	"time"
 	"unsafe"
@@ -21,6 +22,47 @@ type port struct {
 	oldTermios *syscall.Termios
 
 	timeout time.Duration
+
+	// mu guards closed, active and wake against Close. Read and Write
+	// register as active while they use fd; Close marks the port closed,
+	// wakes their waits through the wake pipe and closes fd only once no
+	// call uses it any more, so a descriptor number is never used after
+	// it was closed.
+	mu     sync.Mutex
+	idle   *sync.Cond // signalled when active drops to zero
+	closed bool
+	active int
+	wake   *wakePipe // nil for ports built directly in tests
+}
+
+// wakePipe lets Close interrupt a Read or Write that waits in poll/select.
+type wakePipe struct{ r, w int }
+
+func newWakePipe() (*wakePipe, error) {
+	var fds [2]int
+	syscall.ForkLock.RLock()
+	err := syscall.Pipe(fds[:])
+	if err == nil {
+		syscall.CloseOnExec(fds[0])
+		syscall.CloseOnExec(fds[1])
+	}
+	syscall.ForkLock.RUnlock()
+	if err != nil {
+		return nil, err
+	}
+	if err = syscall.SetNonblock(fds[1], true); err != nil {
+		_ = syscall.Close(fds[0])
+		_ = syscall.Close(fds[1])
+		return nil, err
+	}
+	return &wakePipe{r: fds[0], w: fds[1]}, nil
+}
+
+func (w *wakePipe) signal() { _, _ = syscall.Write(w.w, []byte{0}) }
+
+func (w *wakePipe) close() {
+	_ = syscall.Close(w.r)
+	_ = syscall.Close(w.w)
 }
 
 const (
@@ -28,7 +70,6 @@ const (
 	rs485RTSOnSend    = 1 << 1
 	rs485RTSAfterSend = 1 << 2
 	rs485RXDuringTX   = 1 << 4
-	rs485Tiocs        = 0x542f
 )
 
 // rs485IoctlOpts is used to configure RS485 options in the driver.
@@ -79,18 +120,42 @@ func (p *port) open(c *Config) (err error) {
 		p.close()
 		return err
 	}
+	if p.wake, err = newWakePipe(); err != nil {
+		p.close()
+		return fmt.Errorf("serial: open %s: %w", c.Address, err)
+	}
 	p.timeout = c.Timeout
 	return
 }
 
+// Close restores the saved termios settings and closes the descriptor. A
+// Read or Write blocked in another goroutine returns ErrClosed; Close waits
+// for it to give up the descriptor before closing it.
 func (p *port) Close() (err error) {
-	if p.fd == -1 {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.closed || p.fd == -1 {
+		p.closed = true
 		return nil
+	}
+	p.closed = true
+	if p.wake != nil {
+		p.wake.signal()
+	}
+	for p.active > 0 {
+		if p.idle == nil {
+			p.idle = sync.NewCond(&p.mu)
+		}
+		p.idle.Wait()
 	}
 	restoreErr := p.restoreTermios()
 	closeErr := syscall.Close(p.fd)
 	p.fd = -1
 	p.oldTermios = nil
+	if p.wake != nil {
+		p.wake.close()
+		p.wake = nil
+	}
 	return errors.Join(restoreErr, closeErr)
 }
 
@@ -105,15 +170,48 @@ func (p *port) close() {
 	p.oldTermios = nil
 }
 
+// begin registers an I/O call. It returns the descriptor to use and the
+// wake descriptor (-1 if none), or ErrClosed once Close has started.
+func (p *port) begin() (fd, wake int, err error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.closed {
+		return -1, -1, ErrClosed
+	}
+	p.active++
+	wake = -1
+	if p.wake != nil {
+		wake = p.wake.r
+	}
+	return p.fd, wake, nil
+}
+
+// end unregisters an I/O call started with begin.
+func (p *port) end() {
+	p.mu.Lock()
+	p.active--
+	if p.active == 0 && p.idle != nil {
+		p.idle.Broadcast()
+	}
+	p.mu.Unlock()
+}
+
 // Read reads from the serial port. It blocks until data is available or the configured timeout expires.
 func (p *port) Read(b []byte) (n int, err error) {
-	fd := p.fd
+	fd, wake, err := p.begin()
+	if err != nil {
+		return 0, err
+	}
+	defer p.end()
 	var deadline time.Time
 	if p.timeout > 0 {
 		deadline = time.Now().Add(p.timeout)
 	}
 	for {
-		ready, werr := waitFD(fd, false, deadline)
+		ready, werr := waitFD(fd, wake, false, deadline)
+		if werr == errWoken {
+			return 0, ErrClosed
+		}
 		if werr != nil {
 			return 0, fmt.Errorf("serial: wait for data: %w", werr)
 		}
@@ -144,7 +242,14 @@ func (p *port) Read(b []byte) (n int, err error) {
 // than surfacing as an error. It returns n < len(b) only with an error,
 // and never a negative n.
 func (p *port) Write(b []byte) (n int, err error) {
-	fd := p.fd
+	if len(b) == 0 {
+		return 0, nil
+	}
+	fd, wake, err := p.begin()
+	if err != nil {
+		return 0, err
+	}
+	defer p.end()
 	for n < len(b) {
 		m, werr := syscall.Write(fd, b[n:])
 		if m > 0 {
@@ -152,7 +257,10 @@ func (p *port) Write(b []byte) (n int, err error) {
 		}
 		switch {
 		case werr == syscall.EAGAIN:
-			if _, err = waitFD(fd, true, time.Time{}); err != nil {
+			if _, err = waitFD(fd, wake, true, time.Time{}); err != nil {
+				if err == errWoken {
+					return n, ErrClosed
+				}
 				return n, fmt.Errorf("serial: write: %w", err)
 			}
 		case werr == syscall.EINTR:
@@ -269,6 +377,9 @@ func newTermios(c *Config) (termios *syscall.Termios, err error) {
 func enableRS485(fd int, config *RS485Config) error {
 	if !config.Enabled {
 		return nil
+	}
+	if rs485Tiocs == 0 {
+		return fmt.Errorf("serial: RS485 is supported on Linux only: %w", ErrUnsupportedPlatform)
 	}
 	if config.DelayRtsBeforeSend < 0 || config.DelayRtsBeforeSend > MaxRS485Delay ||
 		config.DelayRtsAfterSend < 0 || config.DelayRtsAfterSend > MaxRS485Delay {

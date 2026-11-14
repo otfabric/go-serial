@@ -1,5 +1,46 @@
 # go-serial Releases
 
+## v0.4.0
+
+**Date:** 2026-11-14
+**Previous release:** v0.3.0
+
+## Summary
+
+`Close` cancels blocked I/O on POSIX systems, long timeouts are honoured on every platform, and the Windows backend returns available data with no timeout set.
+
+## Changes
+
+### Added
+
+- `ErrClosed`, returned on POSIX systems by `Read` and `Write` on a closed port, and by a `Read` or `Write` that was blocked when `Close` ran in another goroutine.
+
+### Changed
+
+- POSIX: `Close` may run concurrently with `Read` and `Write`. It wakes them, waits until they have let go of the descriptor, then restores termios and closes it. Each port holds a pipe for this, so it uses two more descriptors.
+- POSIX: `Read` and `Write` after `Close` return `ErrClosed` instead of an `EBADF` error.
+- macOS and the BSDs: `Open` with `Config.RS485.Enabled` fails with `ErrUnsupportedPlatform` instead of sending Linux's ioctl number.
+- Windows: `Close` is safe to call from several goroutines.
+
+### Fixes
+
+- macOS: `Read` failed at once with "invalid argument" when `Config.Timeout` was above 10^8 seconds, which `select` does not accept. Longer waits are now made in several calls.
+- FreeBSD, NetBSD, OpenBSD: a `Config.Timeout` of 2^31 ms or more did not fit `poll`'s timeout argument. It is now clamped per call and waited in several calls.
+- Linux: the `ppoll` timeout is clamped so 32-bit systems cannot truncate it.
+- Linux on MIPS: RS-485 used the wrong ioctl request number and could not be enabled.
+- Windows: with `Timeout == 0`, `Read` waited for the whole buffer to fill. It now returns as soon as data arrives, as on POSIX.
+- Windows: a timeout below one millisecond turned into no timeout, and timeouts of 2^32 ms or more wrapped around. They are now rounded up and capped at 2^32-2 ms.
+- Windows: `Open` rejects baud rates above 2^32-1 instead of truncating them.
+- Windows: the DCB passed to `SetCommState` has its `DCBlength` set; if setting the timeouts fails, `Open` restores the previous DCB before closing.
+- Windows: `Read` with an empty buffer returns `0, nil` instead of `ErrTimeout`.
+- The test package builds on 32-bit platforms.
+
+### Documentation
+
+- LIMITATIONS.md: on Windows a `Write` may wait for a pending `Read` (one synchronous handle), and `Read` does not report line errors (parity, framing, break).
+
+---
+
 ## v0.3.0
 
 **Date:** 2026-11-12

@@ -23,6 +23,11 @@ var (
 	// ErrUnsupportedPlatform is returned by Open when the current OS is not supported
 	// (no platform init ran). Use errors.Is(err, serial.ErrUnsupportedPlatform) to detect.
 	ErrUnsupportedPlatform = errors.New("serial: unsupported platform")
+
+	// ErrClosed is returned by Read and Write on POSIX systems when the
+	// port was closed before or during the call. Use
+	// errors.Is(err, serial.ErrClosed) to detect.
+	ErrClosed = errors.New("serial: port closed")
 )
 
 // NoTimeout means no read/write deadline (block until I/O completes).
