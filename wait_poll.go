@@ -24,27 +24,35 @@ const (
 	pollNval = 0x20
 )
 
-// waitFDOnce performs a single poll on fd. Unlike select(2), poll has
-// no FD_SETSIZE limit, so ports opened at high descriptor numbers work.
-// d < 0 waits indefinitely.
-func waitFDOnce(fd int, write bool, d time.Duration) (bool, error) {
-	if fd < 0 || fd > math.MaxInt32 {
+// waitFDOnce performs a single poll on fd and, when wake >= 0, on the wake
+// descriptor. Unlike select(2), poll has no FD_SETSIZE limit, so ports
+// opened at high descriptor numbers work. d < 0 waits indefinitely.
+func waitFDOnce(fd, wake int, write bool, d time.Duration) (bool, error) {
+	if fd < 0 || fd > math.MaxInt32 || wake > math.MaxInt32 {
 		return false, syscall.EBADF
 	}
-	pfd := pollFd{fd: int32(fd), events: pollIn}
+	pfds := [2]pollFd{{fd: int32(fd), events: pollIn}}
 	if write {
-		pfd.events = pollOut
+		pfds[0].events = pollOut
 	}
-	n, err := pollOnce(&pfd, d)
+	nfds := 1
+	if wake >= 0 {
+		pfds[1] = pollFd{fd: int32(wake), events: pollIn}
+		nfds = 2
+	}
+	n, err := pollOnce(pfds[:nfds], d)
 	if err != nil {
 		return false, err
 	}
 	if n == 0 {
 		return false, nil
 	}
-	if pfd.revents&pollNval != 0 {
+	if nfds == 2 && pfds[1].revents != 0 {
+		return false, errWoken
+	}
+	if pfds[0].revents&pollNval != 0 {
 		return false, syscall.EBADF
 	}
 	// Ready, POLLHUP or POLLERR: let read(2)/write(2) report data, EOF or the error.
-	return true, nil
+	return pfds[0].revents != 0, nil
 }

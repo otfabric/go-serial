@@ -17,6 +17,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"math/rand"
 	"os"
 	"strconv"
@@ -251,7 +252,7 @@ func TestChaosRandomHangup(t *testing.T) {
 	}
 }
 
-var chaosBauds = []BaudRate{0, 50, 300, 1200, 9600, 19200, 38400, 57600, 115200, 230400, 7, 12345, -9600, 1 << 40}
+var chaosBauds = []BaudRate{0, 50, 300, 1200, 9600, 19200, 38400, 57600, 115200, 230400, 7, 12345, -9600, math.MaxInt32}
 
 func randomChaosConfig(r *rand.Rand, address string) Config {
 	pick := func(n int) bool { return r.Intn(n) == 0 }

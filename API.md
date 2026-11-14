@@ -16,7 +16,7 @@ Module `github.com/otfabric/go-serial`. Symbol-level reference: [pkg.go.dev](htt
 1. **Construct a `Config`**: `serial.DefaultConfig(address)` (9600 8N1), `modbus.DefaultRTUConfig(address)` (19200 8E1), or a literal. `Address` is a device path such as `/dev/ttyUSB0`, or a name such as `COM3` on Windows.
 2. **Open**: `serial.Open(&cfg)` validates the config, normalizes a copy of it, checks the baud rate for the platform, and opens the device. It returns a `Port`.
 3. **Use**: `Port` is `io.ReadWriteCloser`; it has no other methods.
-4. **Close**: the caller owns the `Port` and must call `Close`, which restores the saved termios or DCB and timeouts, then closes the descriptor or handle. A second `Close` returns nil. Do not use the `Port` after `Close`.
+4. **Close**: the caller owns the `Port` and must call `Close`, which restores the saved termios or DCB and timeouts, then closes the descriptor or handle. A second `Close` returns nil. On POSIX systems `Close` cancels a blocked `Read` or `Write`, which returns `ErrClosed`.
 
 Concurrency, timeout and `Close` rules are stated once, in the package documentation in [serial.go](serial.go) and in the [README](README.md#ownership-concurrency-and-close). Platform differences are in [LIMITATIONS.md](LIMITATIONS.md).
 

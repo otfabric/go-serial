@@ -7,11 +7,19 @@ package serial
 import (
 	"errors"
 	"fmt"
+	"math"
+	"sync"
 	"syscall"
+	"time"
+	"unsafe"
 )
 
 type port struct {
+	mu     sync.Mutex // guards handle against concurrent Close calls
 	handle syscall.Handle
+	// waitForData makes Read retry when ReadFile returns no bytes: set for
+	// Timeout == 0, where Read waits until data arrives.
+	waitForData bool
 
 	oldDCB      c_DCB
 	oldTimeouts c_COMMTIMEOUTS
@@ -30,9 +38,10 @@ func init() {
 		}
 		return p, nil
 	}
-	// Windows: any positive baud is passed to the driver; actual support is driver-dependent
-	// (unlike POSIX which uses fixed baud tables per platform).
-	isBaudRateSupported = func(b BaudRate) bool { return b > 0 }
+	// Windows: any positive baud that fits the DCB's 32-bit field is passed
+	// to the driver; actual support is driver-dependent (unlike POSIX,
+	// which uses fixed baud tables per platform).
+	isBaudRateSupported = func(b BaudRate) bool { return b > 0 && uint64(b) <= math.MaxUint32 }
 }
 
 // open connects to the given serial port (internal use).
@@ -51,11 +60,15 @@ func (p *port) open(c *Config) (err error) {
 	if err != nil {
 		return
 	}
-	err = p.setTimeouts(c)
+	if err = p.setTimeouts(c); err != nil {
+		_ = SetCommState(p.handle, &p.oldDCB)
+	}
 	return
 }
 
 func (p *port) Close() (err error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
 	if p.handle == syscall.InvalidHandle {
 		return nil
 	}
@@ -68,18 +81,31 @@ func (p *port) Close() (err error) {
 
 // Read reads from the serial port. It blocks until data is available or the configured timeout expires.
 func (p *port) Read(b []byte) (n int, err error) {
-	var done uint32
-	if err = syscall.ReadFile(p.handle, b, &done, nil); err != nil {
-		return 0, fmt.Errorf("serial: read: %w", err)
+	if len(b) == 0 {
+		return 0, nil
 	}
-	if done == 0 {
-		return 0, ErrTimeout
+	b = clampIO(b)
+	for {
+		start := time.Now()
+		var done uint32
+		if err = syscall.ReadFile(p.handle, b, &done, nil); err != nil {
+			return 0, fmt.Errorf("serial: read: %w", err)
+		}
+		if done > 0 {
+			return int(done), nil
+		}
+		// With Timeout == 0, ReadFile gives up after ReadTotalTimeoutConstant
+		// (about 49.7 days) and Read waits again. A zero-byte return before
+		// that is the driver reporting that the device went away.
+		if !p.waitForData || time.Since(start) < foreverWait-time.Minute {
+			return 0, ErrTimeout
+		}
 	}
-	return int(done), nil
 }
 
 // Write writes data to the serial port.
 func (p *port) Write(b []byte) (n int, err error) {
+	b = clampIO(b)
 	var done uint32
 	if err = syscall.WriteFile(p.handle, b, &done, nil); err != nil {
 		return 0, fmt.Errorf("serial: write: %w", err)
@@ -87,16 +113,48 @@ func (p *port) Write(b []byte) (n int, err error) {
 	return int(done), nil
 }
 
+// foreverWait is how long one ReadFile waits with Timeout == 0.
+const foreverWait = (c_MAXDWORD - 1) * time.Millisecond
+
+// maxIO is the largest length ReadFile and WriteFile take (a DWORD).
+var maxIO uint64 = math.MaxUint32
+
+// clampIO limits b to what one ReadFile or WriteFile call can transfer;
+// the caller sees a short count and continues as io.Reader/io.Writer allow.
+func clampIO(b []byte) []byte {
+	if uint64(len(b)) > maxIO {
+		return b[:maxIO]
+	}
+	return b
+}
+
+// timeoutMs converts a positive Timeout to COMMTIMEOUTS milliseconds:
+// sub-millisecond values round up to 1 and the result stays below
+// MAXDWORD, which has a special meaning for ReadTotalTimeoutConstant.
+func timeoutMs(d time.Duration) uint32 {
+	ms := d / time.Millisecond
+	if d%time.Millisecond != 0 {
+		ms++
+	}
+	return uint32(min(max(ms, 1), c_MAXDWORD-1))
+}
+
 func (p *port) setTimeouts(c *Config) error {
-	var timeouts c_COMMTIMEOUTS
-	// Read and write timeout
+	// Read returns as soon as a byte arrived, or with zero bytes after
+	// ReadTotalTimeoutConstant. Timeout == 0 uses the longest constant and
+	// Read retries, so it returns the data that arrived instead of waiting
+	// for a full buffer. Write has a timeout only when Timeout > 0.
+	timeouts := c_COMMTIMEOUTS{
+		ReadIntervalTimeout:        c_MAXDWORD,
+		ReadTotalTimeoutMultiplier: c_MAXDWORD,
+		ReadTotalTimeoutConstant:   c_MAXDWORD - 1,
+	}
 	if c.Timeout > 0 {
-		timeout := toDWORD(int(c.Timeout.Nanoseconds() / 1e6))
-		// wait until a byte arrived or time out
-		timeouts.ReadIntervalTimeout = c_MAXDWORD
-		timeouts.ReadTotalTimeoutMultiplier = c_MAXDWORD
+		timeout := timeoutMs(c.Timeout)
 		timeouts.ReadTotalTimeoutConstant = timeout
 		timeouts.WriteTotalTimeoutConstant = timeout
+	} else {
+		p.waitForData = true
 	}
 	if err := GetCommTimeouts(p.handle, &p.oldTimeouts); err != nil {
 		return fmt.Errorf("serial: get comm timeouts: %w", err)
@@ -109,7 +167,7 @@ func (p *port) setTimeouts(c *Config) error {
 }
 
 func (p *port) setSerialConfig(c *Config) error {
-	var dcb c_DCB
+	dcb := c_DCB{DCBlength: uint32(unsafe.Sizeof(c_DCB{}))}
 	if c.BaudRate == 0 {
 		dcb.BaudRate = 9600
 	} else {

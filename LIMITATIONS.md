@@ -11,7 +11,8 @@ Nothing in this library is certified. The README's comparison and feature statem
 - Port enumeration and USB metadata.
 - Modem control lines (DTR, RTS, CTS and status bits) and hardware or software flow control settings.
 - Break signals, buffer flush and drain.
-- Per-call deadlines, cancellation, and a `context` API. `Close` is not a cancel: see the [package documentation](serial.go).
+- Per-call deadlines and a `context` API. On POSIX systems `Close` cancels blocked I/O; on Windows it does not: see the [package documentation](serial.go).
+- Line error reporting. A received parity or framing error, or a break, is not reported by `Read`: POSIX delivers such a byte as `0x00`, Windows as the received value. Protocols with a checksum (Modbus RTU CRC) detect the corruption.
 - 1.5 stop bits; mark and space parity.
 - Protocol logic. The `modbus` package holds presets only.
 - Logging and metrics hooks.
@@ -22,13 +23,16 @@ Nothing in this library is certified. The README's comparison and feature statem
 |---|---|---|---|---|---|
 | Baud rates | Table up to 4000000 | Table up to 230400 | Table up to 460800 | Table up to 230400 | Any positive value; the driver decides |
 | Wait mechanism | `poll` | `select`; descriptors at or above `FD_SETSIZE` fail with `EINVAL` | `poll` | `poll` | Blocking `ReadFile` |
-| `Config.Timeout` on `Read` | Yes | Yes | Yes | Yes | Yes, truncated to milliseconds |
+| `Config.Timeout` on `Read` | Yes | Yes | Yes | Yes | Yes, in milliseconds: rounded up, at most 2^32-2 ms (about 49.7 days) |
 | `Config.Timeout` on `Write` | No | No | No | No | Passed to `COMMTIMEOUTS` |
 | Hangup on `Read` | `io.EOF` or the OS error | Same | Same | Same | Not distinguished: zero bytes returns `ErrTimeout` |
 | Partial `Write` | Only with an error | Same | Same | Same | Returns the count from `WriteFile`; no retry loop |
+| Concurrent `Read` and `Write` | Independent | Same | Same | Same | One synchronous handle: a `Write` may wait for a pending `Read` |
+| `Close` during `Read`/`Write` | Cancels them with `ErrClosed` | Same | Same | Same | Not supported |
 
 - `ErrTimeout` is returned by `Read` only. No backend returns it from `Write`, although [ERRORS.md](ERRORS.md) describes the write case as well.
-- **RS-485.** The POSIX backend sends one ioctl with Linux's `TIOCSRS485` request number on every POSIX system; there is no per-OS handling. If the driver refuses it, `Open` fails. The Windows backend ignores `Config.RS485` without an error. Delays are truncated to milliseconds.
+- **RS-485.** Linux only: `Open` sends `TIOCSRS485` (with the MIPS request number on MIPS) and fails if the driver refuses it. On macOS and the BSDs `Open` with `Config.RS485.Enabled` fails with `ErrUnsupportedPlatform`. The Windows backend ignores `Config.RS485` without an error. Delays are truncated to milliseconds.
+- **Timeouts beyond the wait primitive.** A `Config.Timeout` longer than `select`, `poll` or `ppoll` can take in one call (macOS: 10^8 s; BSD: 2^31-1 ms) is waited in several calls, so `Read` still waits the full time.
 
 ## Timing
 

@@ -223,8 +223,10 @@ cfg.Parity = serial.ParityNone
 - **Ownership** — `Open` copies and normalizes `Config`. The caller owns the
   returned `Port` and must `Close` it. Do not use the port after `Close`.
 - **Concurrency** — One `Read` and one `Write` may run concurrently on the same
-  `Port` (full-duplex). Do **not** run multiple concurrent readers or writers,
-  and do **not** call `Close` concurrently with `Read`/`Write` (undefined).
+  `Port` (full-duplex). Do **not** run multiple concurrent readers or writers.
+  On **Windows** the port is a synchronous handle: a `Write` issued while a
+  `Read` waits may wait for that `Read` to return, so use a finite `Timeout`
+  when reading and writing from separate goroutines.
 - **Timeouts** — `Config.Timeout` applies to **Read** on all platforms. On
   **Windows**, the same timeout is also applied to Write when `Timeout > 0`.
   On **POSIX** (Linux/macOS/BSD), Write has no library-applied timeout: it
@@ -232,10 +234,12 @@ cfg.Parity = serial.ParityNone
   bytes are written (or with an error). `Timeout == 0` means Read may block indefinitely until data
   arrives (or the underlying fd/handle is closed by the OS).
 - **Close** — Restores prior termios (POSIX) or DCB/timeouts (Windows) when
-  possible, then closes the fd/handle. Closing **may** cause a blocked
-  Read/Write to return an error on some platforms, but this is **not** a
-  synchronized cancel API (no `CancelIo` / coordinated wakeup). Prefer a finite
-  `Timeout` for Read, and avoid `Close` while I/O is in flight.
+  possible, then closes the fd/handle. `Close` may be called more than once
+  and from several goroutines. On **POSIX** it also cancels I/O: a `Read` or
+  `Write` blocked in another goroutine returns `ErrClosed`, `Close` waits until
+  it has let go of the descriptor, and later calls return `ErrClosed`. On
+  **Windows** `Close` is not a cancel; do not call it while I/O is in flight,
+  and prefer a finite `Timeout`.
 - **Hangup** — On POSIX systems, `Read` returns `io.EOF` (or the OS error, such
   as `EIO`) with `n == 0` once the device goes away, e.g. an unplugged USB
   adapter; it never returns a negative count.
