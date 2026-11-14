@@ -69,3 +69,15 @@ When a fuzz run fails:
 1. Go writes the input to `testdata/fuzz/<FuzzName>/`. Commit that file with the fix; `go test` then replays it on every run.
 2. Reproduce with `go test -run '<FuzzName>/<file>' .`
 3. Fix the code, confirm the replay passes, and add a test by name for the behaviour if it is not obvious from the corpus entry.
+
+## When CI runs
+
+| Event | Workflow | What runs |
+|---|---|---|
+| Pull request | `pr.yml` | `docs.yml` (docsync, otfabric-policy) always; `ci.yml` unless every changed file is documentation; then `OT Fabric Required Checks` |
+| Push to a branch | none | nothing; dispatch `ci.yml` to test a branch without a pull request |
+| Push to `main` | `docs.yml` | the light checks; the merged commit was tested as the pull request's merge commit |
+| Schedule | `nightly.yml` | the scheduled runs, on `main` |
+| Release | `release.yml` | the release workflow tests the release commit again |
+
+Documentation means an added or modified `*.md` file outside `.github/`, `testdata/` and `vendor/`, other than `AGENTS.md` and `CLAUDE.md`. A deleted or renamed document, or any other file, runs everything. `OT Fabric Required Checks` fails unless every job that applies succeeded; its summary lists them.
