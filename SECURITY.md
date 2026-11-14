@@ -6,8 +6,8 @@ go-serial is pre-1.0. Security fixes are released on the minor line of the lates
 
 | Version | Supported |
 |---------|-----------|
-| 0.2.x | Yes |
-| < 0.2 | No; upgrade to the latest 0.2.x release |
+| 0.3.x | Yes |
+| < 0.3 | No; upgrade to the latest 0.3.x release |
 
 ## Reporting a vulnerability
 
