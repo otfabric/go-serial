@@ -50,6 +50,10 @@ jobs:
             goarch: amd64
           - goos: freebsd
             goarch: arm64
+          - goos: netbsd
+            goarch: amd64
+          - goos: openbsd
+            goarch: amd64
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
@@ -63,6 +67,15 @@ jobs:
           GOARM: ${{ matrix.goarm }}
           CGO_ENABLED: "0"
         run: go build ./...
+      # go build skips the test files. go vet compiles them for the target,
+      # so the tests of a backend that no job runs still have to build.
+      - name: Vet
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          GOARM: ${{ matrix.goarm }}
+          CGO_ENABLED: "0"
+        run: go vet ./...
 
   # Per-package coverage floor (TEST-012): the shared workflow gates the
   # total, this job gates each package.
@@ -91,3 +104,16 @@ jobs:
         with:
           go-version-file: go.mod
       - run: make test-pty
+
+  # A runner has no serial port, so no test opens one. This runs what needs
+  # none on Windows: the time-out and DCB conversions, the Write loop on a
+  # replaced WriteFile, and the tests without a build constraint.
+  windows:
+    name: Tests (windows-latest)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - run: go test -count=1 ./...

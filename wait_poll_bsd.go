@@ -1,4 +1,4 @@
-//go:build freebsd || openbsd || netbsd
+//go:build freebsd || netbsd
 
 // SPDX-License-Identifier: MIT
 
@@ -29,7 +29,8 @@ func pollTimeoutMs(d time.Duration) int {
 	return int(ms)
 }
 
-// pollOnce wraps poll(2).
+// pollOnce wraps poll(2). OpenBSD is not here: its syscall package carries
+// out syscall.Syscall for ioctl only, so it waits with select (wait_select.go).
 func pollOnce(pfds []pollFd, d time.Duration) (int, error) {
 	n, _, errno := syscall.Syscall(syscall.SYS_POLL,
 		uintptr(unsafe.Pointer(&pfds[0])), uintptr(len(pfds)), uintptr(pollTimeoutMs(d)))

@@ -8,6 +8,7 @@ import (
 	"errors"
 	"math"
 	"os"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -46,20 +47,86 @@ func waitResult(t *testing.T, ch <-chan ioResult, what string) ioResult {
 	}
 }
 
-func TestCloseUnblocksRead(t *testing.T) {
-	p, _ := openTestPTY(t, NoTimeout)
-	ch := make(chan ioResult, 1)
-	go func() {
-		n, err := p.Read(make([]byte, 16))
-		ch <- ioResult{n, err}
-	}()
-	time.Sleep(50 * time.Millisecond) // let Read block in its wait
-	closed := make(chan error, 1)
-	go func() { closed <- p.Close() }()
-	r := waitResult(t, ch, "Read")
-	if r.n != 0 || !errors.Is(r.err, ErrClosed) {
-		t.Fatalf("Read = %d, %v; want 0, ErrClosed", r.n, r.err)
+// ioHooks lets a test follow one Read or Write on a port through port.hook.
+type ioHooks struct {
+	waiting chan struct{} // closed when the call is about to wait for the descriptor
+	ending  chan struct{} // closed when the call is about to unregister
+	resume  chan struct{} // the call unregisters once this is closed
+
+	waitOnce, endOnce, resumeOnce sync.Once
+}
+
+// release lets the call that stopped in the hook unregister.
+func (h *ioHooks) release() { h.resumeOnce.Do(func() { close(h.resume) }) }
+
+// hookPort installs hooks on p that stop a Read or Write just before it
+// unregisters, until release is called. The test's cleanup releases it too,
+// so a failed test does not leave Close waiting.
+func hookPort(t *testing.T, p Port) (*port, *ioHooks) {
+	t.Helper()
+	pp, ok := p.(*port)
+	if !ok {
+		t.Fatalf("Open returned %T, want *port", p)
 	}
+	h := &ioHooks{waiting: make(chan struct{}), ending: make(chan struct{}), resume: make(chan struct{})}
+	pp.hook = func(e hookEvent) {
+		switch e {
+		case hookWaiting:
+			h.waitOnce.Do(func() { close(h.waiting) })
+		case hookEnding:
+			h.endOnce.Do(func() { close(h.ending) })
+			<-h.resume
+		}
+	}
+	t.Cleanup(h.release)
+	return pp, h
+}
+
+func waitEvent(t *testing.T, ch <-chan struct{}, what string) {
+	t.Helper()
+	select {
+	case <-ch:
+	case <-time.After(5 * time.Second):
+		t.Fatalf("timed out waiting for %s", what)
+	}
+}
+
+// assertCloseWaits checks the state of a port whose Close runs in another
+// goroutine while a Read or Write (op) has been woken and has stopped in the
+// hook, still registered: Close has not returned, the port still holds
+// descriptor fd, and fd is open. A second Close returns nil without closing it.
+func assertCloseWaits(t *testing.T, pp *port, fd int, closed <-chan error, op string) {
+	t.Helper()
+	// Close holds mu from its first statement and gives it up only while it
+	// waits for the call, or when it returns: taking mu here observes one of
+	// those two states and nothing in between.
+	pp.mu.Lock()
+	isClosed, active, cur := pp.closed, pp.active, pp.fd
+	pp.mu.Unlock()
+	if !isClosed || active != 1 || cur != fd {
+		t.Fatalf("with %s still registered: closed=%v active=%d fd=%d; want true, 1, %d", op, isClosed, active, cur, fd)
+	}
+	var st syscall.Stat_t
+	if err := syscall.Fstat(fd, &st); err != nil {
+		t.Fatalf("descriptor %d while %s still uses it: %v", fd, op, err)
+	}
+	select {
+	case err := <-closed:
+		t.Fatalf("Close returned (%v) while %s was still registered", err, op)
+	default:
+	}
+	if err := pp.Close(); err != nil {
+		t.Fatalf("second Close during %s: %v", op, err)
+	}
+	if err := syscall.Fstat(fd, &st); err != nil {
+		t.Fatalf("descriptor %d after a second Close, with %s still registered: %v", fd, op, err)
+	}
+}
+
+// assertClosed checks that the first Close returned nil and that the port
+// gave up its descriptor.
+func assertClosed(t *testing.T, pp *port, closed <-chan error) {
+	t.Helper()
 	select {
 	case err := <-closed:
 		if err != nil {
@@ -68,27 +135,68 @@ func TestCloseUnblocksRead(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("Close did not return")
 	}
+	pp.mu.Lock()
+	fd, active := pp.fd, pp.active
+	pp.mu.Unlock()
+	if fd != -1 || active != 0 {
+		t.Fatalf("after Close: fd=%d active=%d; want -1, 0", fd, active)
+	}
 }
 
-func TestCloseUnblocksWrite(t *testing.T) {
+// TestCloseUnblocksRead is row L3 of the lifecycle matrix: Close during a
+// Read that waits for data. The Read returns ErrClosed, and Close keeps the
+// descriptor open and does not return until the Read has unregistered.
+func TestCloseUnblocksRead(t *testing.T) {
 	p, _ := openTestPTY(t, NoTimeout)
-	// The master never reads, so the pty fills and Write waits for room.
+	pp, h := hookPort(t, p)
+	fd := pp.fd
 	ch := make(chan ioResult, 1)
 	go func() {
-		n, err := p.Write(make([]byte, 1<<20))
+		n, err := p.Read(make([]byte, 16))
 		ch <- ioResult{n, err}
 	}()
-	time.Sleep(100 * time.Millisecond)
-	if err := p.Close(); err != nil {
-		t.Fatalf("Close: %v", err)
+	waitEvent(t, h.waiting, "Read to reach its wait")
+	closed := make(chan error, 1)
+	go func() { closed <- p.Close() }()
+	// Close wakes the Read, which stops in the hook before it unregisters.
+	waitEvent(t, h.ending, "Close to wake Read")
+	assertCloseWaits(t, pp, fd, closed, "Read")
+	h.release()
+	r := waitResult(t, ch, "Read")
+	if r.n != 0 || !errors.Is(r.err, ErrClosed) {
+		t.Fatalf("Read = %d, %v; want 0, ErrClosed", r.n, r.err)
 	}
+	assertClosed(t, pp, closed)
+}
+
+// TestCloseUnblocksWrite is row L4: Close during a Write that waits for
+// room in the output buffer. The Write returns the count it wrote with
+// ErrClosed, and Close waits for it as for a Read.
+func TestCloseUnblocksWrite(t *testing.T) {
+	p, _ := openTestPTY(t, NoTimeout)
+	pp, h := hookPort(t, p)
+	fd := pp.fd
+	// The master never reads, so the pty fills and Write waits for room.
+	const size = 1 << 20
+	ch := make(chan ioResult, 1)
+	go func() {
+		n, err := p.Write(make([]byte, size))
+		ch <- ioResult{n, err}
+	}()
+	waitEvent(t, h.waiting, "Write to wait for room")
+	closed := make(chan error, 1)
+	go func() { closed <- p.Close() }()
+	waitEvent(t, h.ending, "Close to wake Write")
+	assertCloseWaits(t, pp, fd, closed, "Write")
+	h.release()
 	r := waitResult(t, ch, "Write")
 	if !errors.Is(r.err, ErrClosed) {
 		t.Fatalf("Write = %d, %v; want ErrClosed", r.n, r.err)
 	}
-	if r.n < 0 || r.n >= 1<<20 {
+	if r.n <= 0 || r.n >= size {
 		t.Fatalf("Write n = %d, want a partial count", r.n)
 	}
+	assertClosed(t, pp, closed)
 }
 
 func TestIOAfterCloseReturnsErrClosed(t *testing.T) {

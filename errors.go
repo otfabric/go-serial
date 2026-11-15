@@ -9,10 +9,12 @@ import (
 )
 
 var (
-	// ErrTimeout is returned when a read or write does not complete before the deadline.
-	// Config.Timeout influences read/write behavior; semantics are platform-dependent. On most
-	// platforms, ErrTimeout is returned when a read times out with no data; write timeout behavior
-	// may differ. Zero timeout means no deadline (block until I/O completes). Use errors.Is(err, serial.ErrTimeout) to detect.
+	// ErrTimeout is returned by Read when no data arrived within
+	// Config.Timeout, and on Windows by Write when that time passed before
+	// all bytes were written: the count returned with it says how many
+	// were. The POSIX Write has no deadline and does not return it. Zero
+	// timeout means no deadline (block until I/O completes). Use
+	// errors.Is(err, serial.ErrTimeout) to detect.
 	ErrTimeout = errors.New("serial: timeout")
 
 	// ErrInvalidConfig is returned when config validation fails (e.g. empty address,

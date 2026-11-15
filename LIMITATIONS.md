@@ -2,10 +2,6 @@
 
 Nothing in this library is certified. The README's comparison and feature statements describe the code, not a conformance result.
 
-## Known defects
-
-- **macOS: `TestChaosOpenCloseChurn` fails intermittently** with an error opening `/dev/ptmx`. The cause has not been established.
-
 ## Not implemented
 
 - Port enumeration and USB metadata.
@@ -19,20 +15,24 @@ Nothing in this library is certified. The README's comparison and feature statem
 
 ## Platform differences
 
+What is tested on each platform, and what is only built, is in the [README](README.md#supported-platforms) and under [Not verified](#not-verified).
+
 | Behaviour | Linux | macOS | FreeBSD, NetBSD | OpenBSD | Windows |
 |---|---|---|---|---|---|
+| `Config.Address` | A path. `Open` fails unless it is a character device | Same | Same | Same | Passed to `CreateFile` as given. Win32 takes `COM1` to `COM9` as they are and needs the form `\\.\COM10` for higher numbers; that form works for every port |
+| Exclusive open | No: another process can open the same device | Same | Same | Same | Yes |
 | Baud rates | Table up to 4000000 | Table up to 230400 | Table up to 460800 | Table up to 230400 | Any positive value; the driver decides |
-| Wait mechanism | `poll` | `select`; descriptors at or above `FD_SETSIZE` fail with `EINVAL` | `poll` | `poll` | Blocking `ReadFile` |
+| Wait mechanism | `ppoll` | `select`; descriptors at or above `FD_SETSIZE` (1024) fail with `EINVAL` | `poll` | `select`, with the same limit as macOS | Blocking `ReadFile` |
 | `Config.Timeout` on `Read` | Yes | Yes | Yes | Yes | Yes, in milliseconds: rounded up, at most 2^32-2 ms (about 49.7 days) |
-| `Config.Timeout` on `Write` | No | No | No | No | Passed to `COMMTIMEOUTS` |
+| `Config.Timeout` on `Write` | No | No | No | No | Passed to `COMMTIMEOUTS`; it applies to each `WriteFile` call |
 | Hangup on `Read` | `io.EOF` or the OS error | Same | Same | Same | Not distinguished: zero bytes returns `ErrTimeout` |
-| Partial `Write` | Only with an error | Same | Same | Same | Returns the count from `WriteFile`; no retry loop |
+| Partial `Write` | Only with an error | Same | Same | Same | Only with an error: `ErrTimeout` when `Config.Timeout` is set, otherwise an error wrapping `io.ErrShortWrite` |
 | Concurrent `Read` and `Write` | Independent | Same | Same | Same | One synchronous handle: a `Write` may wait for a pending `Read` |
 | `Close` during `Read`/`Write` | Cancels them with `ErrClosed` | Same | Same | Same | Not supported |
 
-- `ErrTimeout` is returned by `Read` only. No backend returns it from `Write`, although [ERRORS.md](ERRORS.md) describes the write case as well.
+- `ErrTimeout` comes from `Read` on every platform and from `Write` on Windows only: the POSIX `Write` has no deadline. After a `Write` that returned `ErrTimeout`, `n` bytes were handed to the driver and the rest were not; the library does not retry.
 - **RS-485.** Linux only: `Open` sends `TIOCSRS485` (with the MIPS request number on MIPS) and fails if the driver refuses it. On macOS and the BSDs `Open` with `Config.RS485.Enabled` fails with `ErrUnsupportedPlatform`. The Windows backend ignores `Config.RS485` without an error. Delays are truncated to milliseconds.
-- **Timeouts beyond the wait primitive.** A `Config.Timeout` longer than `select`, `poll` or `ppoll` can take in one call (macOS: 10^8 s; BSD: 2^31-1 ms) is waited in several calls, so `Read` still waits the full time.
+- **Timeouts beyond the wait primitive.** A `Config.Timeout` longer than `select`, `poll` or `ppoll` can take in one call (macOS and OpenBSD: 10^8 s; FreeBSD and NetBSD: 2^31-1 ms; Linux: 2^31-1 s) is waited in several calls, so `Read` still waits the full time.
 
 ## Timing
 
@@ -42,6 +42,8 @@ go-serial gives no real-time guarantee. Timeouts are bounded by the operating sy
 
 - **No physical hardware.** No test uses a real UART, USB adapter or RS-485 transceiver. Baud rate, parity and stop bits are not observed on a line.
 - **RS-485 driver behaviour.** Tests cover validation and the refusal on a PTY, never an accepted ioctl.
-- **Windows I/O.** No test opens a port, and CI only cross-compiles the backend.
-- **macOS and the BSDs in CI.** CI builds macOS and FreeBSD, and does not run their tests. `make cross` also builds NetBSD and OpenBSD, which CI does not.
+- **Windows I/O.** No test opens a port: `Open`, the `ReadFile` loop, `Close` and the behaviour of a driver are not exercised. CI runs on `windows-latest` the tests that need no port (the time-out and DCB conversions, and `Write` on a replaced `WriteFile`). That a `WriteFile` which runs out of time reports success with a short count is taken from the Win32 documentation of `COMMTIMEOUTS`, not from a run.
+- **The BSDs.** CI builds and vets FreeBSD, NetBSD and OpenBSD and runs none of their tests. FreeBSD has a PTY helper for the tests; NetBSD and OpenBSD have none.
+- **OpenBSD.** No test has run on OpenBSD. Its wait uses `select` through the same code as macOS, where the tests run; whether `Open`, `Read` and `Write` work on an OpenBSD system has not been observed.
+- **32-bit systems.** The tests run as a linux/386 binary in the nightly workflow only. Other 32-bit targets (linux/arm, windows/386, the 32-bit BSDs) are built at most.
 - **Independent implementations.** There is no interop suite.

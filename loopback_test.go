@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"sync"
 	"testing"
 	"time"
 )
@@ -55,8 +56,16 @@ func relayPTY(dst, src *os.File, done chan struct{}) {
 	close(done)
 }
 
+// ptmxMu serializes the opens of /dev/ptmx. macOS answers some of them with
+// errno -6 when tests open masters and slaves from several goroutines at
+// once (TestChaosOpenCloseChurn); one open at a time does not. The library
+// itself never opens /dev/ptmx.
+var ptmxMu sync.Mutex
+
 func openPTY() (master *os.File, slavePath string, err error) {
+	ptmxMu.Lock()
 	master, err = os.OpenFile("/dev/ptmx", os.O_RDWR, 0)
+	ptmxMu.Unlock()
 	if err != nil {
 		return nil, "", err
 	}

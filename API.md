@@ -14,8 +14,8 @@ Module `github.com/otfabric/go-serial`. Symbol-level reference: [pkg.go.dev](htt
 ## Lifecycle
 
 1. **Construct a `Config`**: `serial.DefaultConfig(address)` (9600 8N1), `modbus.DefaultRTUConfig(address)` (19200 8E1), or a literal. `Address` is a device path such as `/dev/ttyUSB0`, or a name such as `COM3` on Windows.
-2. **Open**: `serial.Open(&cfg)` validates the config, normalizes a copy of it, checks the baud rate for the platform, and opens the device. It returns a `Port`.
-3. **Use**: `Port` is `io.ReadWriteCloser`; it has no other methods.
+2. **Open**: `serial.Open(&cfg)` validates the config, normalizes a copy of it, checks the baud rate for the platform, and opens the device. On POSIX systems the path must be a character device: for any other file `Open` fails with an error wrapping `ENOTTY`, before it reads or changes a terminal setting. It returns a `Port`.
+3. **Use**: `Port` is `io.ReadWriteCloser`; it has no other methods. `Write` returns `n < len(b)` only with an error; on Windows that error is `ErrTimeout` when `Config.Timeout` passed first.
 4. **Close**: the caller owns the `Port` and must call `Close`, which restores the saved termios or DCB and timeouts, then closes the descriptor or handle. A second `Close` returns nil. On POSIX systems `Close` cancels a blocked `Read` or `Write`, which returns `ErrClosed`.
 
 Concurrency, timeout and `Close` rules are stated once, in the package documentation in [serial.go](serial.go) and in the [README](README.md#ownership-concurrency-and-close). Platform differences are in [LIMITATIONS.md](LIMITATIONS.md).
@@ -38,12 +38,12 @@ Concurrency, timeout and `Close` rules are stated once, in the package documenta
 
 | Field | Type | Zero value after normalization | Validation |
 |---|---|---|---|
-| `Address` | `string` | none | Must not be empty |
+| `Address` | `string` | none | Must not be empty. POSIX: `Open` requires a character device |
 | `BaudRate` | `BaudRate` | 9600 | Checked by `Open`, not by `Validate` |
 | `DataBits` | `DataBits` | 8 | 5, 6, 7, 8 |
 | `StopBits` | `StopBits` | 1 | 1, 2 |
 | `Parity` | `Parity` | `ParityNone` | `N`, `E`, `O` |
-| `Timeout` | `time.Duration` | `NoTimeout` | Not negative |
+| `Timeout` | `time.Duration` | `NoTimeout` | Not negative. Applies to `Read`, and on Windows to `Write` |
 | `RS485` | `RS485Config` | disabled | Delays from 0 to `MaxRS485Delay`, when enabled |
 
 Methods: `Normalized()` returns the config with the defaults filled in, and `Validate()` returns a `*ConfigError` wrapping `ErrInvalidConfig`.

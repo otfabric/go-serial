@@ -1,4 +1,4 @@
-//go:build linux || freebsd || openbsd || netbsd
+//go:build linux || freebsd || netbsd
 
 // SPDX-License-Identifier: MIT
 
@@ -10,14 +10,15 @@ import (
 	"time"
 )
 
-// pollFd mirrors struct pollfd, which has the same layout on Linux and the BSDs.
+// pollFd mirrors struct pollfd, which has the same layout on Linux, FreeBSD
+// and NetBSD.
 type pollFd struct {
 	fd      int32
 	events  int16
 	revents int16
 }
 
-// poll(2) event bits; identical on Linux and the BSDs.
+// poll(2) event bits; identical on Linux, FreeBSD and NetBSD.
 const (
 	pollIn   = 0x1
 	pollOut  = 0x4

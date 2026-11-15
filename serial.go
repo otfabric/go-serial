@@ -21,10 +21,12 @@ separate goroutines.
 # Timeouts and Close
 
 Config.Timeout applies to Read on all platforms; Write timeout is honored on
-Windows when Timeout > 0, and is not applied on POSIX, where Write blocks
-while the driver's output buffer is full and returns once all bytes are
-written or an error occurs. Timeout == 0 means Read may block indefinitely until data
-arrives (or the fd/handle is closed by the OS).
+Windows when Timeout > 0, where a Write that runs out of time returns the
+number of bytes written and ErrTimeout. It is not applied on POSIX, where
+Write blocks while the driver's output buffer is full and returns once all
+bytes are written or an error occurs. On every platform Write returns
+n < len(b) only with an error. Timeout == 0 means Read may block
+indefinitely until data arrives (or the fd/handle is closed by the OS).
 
 Close restores prior termios/DCB settings when possible, then closes the
 fd/handle. Close may be called more than once and from several goroutines.

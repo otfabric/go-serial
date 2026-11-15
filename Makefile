@@ -7,9 +7,9 @@ PKGS := ./...
 COVER_PKGS := $(shell $(GO) list ./... | grep -v '/example$$')
 COVER_MIN := 90
 # Per-package floor (TEST-012), checked by coverage-pkg-check. Lowest package
-# measured in CI: 96.1 % (the root package). See TESTING.md.
+# measured on Linux at v0.4.1: 94.6 % (the root package). See TESTING.md.
 COVER_PKG_MIN := 90
-# ci.yml cross-build matrix, plus netbsd and openbsd, which have backends here.
+# The cross-build matrix of ci.yml.
 CROSS_PLATFORMS := linux/amd64 linux/arm linux/arm64 darwin/amd64 darwin/arm64 windows/amd64 windows/arm64 freebsd/amd64 freebsd/arm64 netbsd/amd64 openbsd/amd64
 
 # docsync release of docs-check (DOC-008).
@@ -80,10 +80,11 @@ coverage-html: coverage ## Generate HTML coverage report
 coverage-clean: ## Remove coverage artifacts
 	rm -f coverage.out coverage.txt coverage.html
 
-cross: ## Cross-compile without cgo for CROSS_PLATFORMS
+cross: ## Cross-compile and vet without cgo for CROSS_PLATFORMS (vet compiles the tests)
 	@for p in $(CROSS_PLATFORMS); do \
-		echo "build $$p"; \
+		echo "build and vet $$p"; \
 		CGO_ENABLED=0 GOOS=$${p%/*} GOARCH=$${p#*/} $(GO) build ./... || exit 1; \
+		CGO_ENABLED=0 GOOS=$${p%/*} GOARCH=$${p#*/} $(GO) vet ./... || exit 1; \
 	done
 
 tidy: ## Tidy module files

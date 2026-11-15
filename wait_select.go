@@ -1,4 +1,4 @@
-//go:build darwin
+//go:build darwin || openbsd
 
 // SPDX-License-Identifier: MIT
 
@@ -12,14 +12,15 @@ import (
 
 // maxSelectTimeout is the largest timeout select(2) accepts on macOS
 // (tv_sec <= 100000000); longer waits are clamped and waitFD waits again
-// until the real deadline.
+// until the real deadline. OpenBSD uses the same clamp.
 const maxSelectTimeout = 100000000 * time.Second
 
-// waitFDOnce uses select(2) on macOS, whose poll(2) does not support
-// tty devices. select cannot represent descriptors >= FD_SETSIZE in a
-// syscall.FdSet, so those are rejected instead of letting the kernel read
-// and write past the end of the set. When wake >= 0 it is watched for
-// reading as well.
+// waitFDOnce uses select(2): on macOS, whose poll(2) does not support tty
+// devices, and on OpenBSD, where the syscall package has Select but no poll
+// and carries out syscall.Syscall for ioctl only. select cannot represent
+// descriptors >= FD_SETSIZE in a syscall.FdSet, so those are rejected
+// instead of letting the kernel read and write past the end of the set.
+// When wake >= 0 it is watched for reading as well.
 func waitFDOnce(fd, wake int, write bool, d time.Duration) (bool, error) {
 	if fd >= syscall.FD_SETSIZE || wake >= syscall.FD_SETSIZE {
 		return false, fmt.Errorf("fd %d exceeds FD_SETSIZE (%d) for select: %w", max(fd, wake), syscall.FD_SETSIZE, syscall.EINVAL)

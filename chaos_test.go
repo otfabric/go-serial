@@ -363,7 +363,9 @@ func TestChaosOpenCloseChurn(t *testing.T) {
 	workers := 8
 	cycles := chaosScale(t, 40)
 	var wg sync.WaitGroup
-	errs := make(chan error, workers)
+	// Every cycle can report a close error and every worker one open error:
+	// the channel holds them all, so a worker never blocks on it.
+	errs := make(chan error, workers*cycles+workers)
 	for w := 0; w < workers; w++ {
 		seed := r.Int63()
 		wg.Add(1)

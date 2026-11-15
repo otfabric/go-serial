@@ -20,6 +20,9 @@ type port struct {
 	// waitForData makes Read retry when ReadFile returns no bytes: set for
 	// Timeout == 0, where Read waits until data arrives.
 	waitForData bool
+	// timedWrite is set for Timeout > 0, which is the write time-out too:
+	// a WriteFile that comes back short then ran out of time.
+	timedWrite bool
 
 	oldDCB      c_DCB
 	oldTimeouts c_COMMTIMEOUTS
@@ -103,14 +106,22 @@ func (p *port) Read(b []byte) (n int, err error) {
 	}
 }
 
-// Write writes data to the serial port.
+// writeFile is WriteFile; tests replace it.
+var writeFile = syscall.WriteFile
+
+// Write writes all of b, in several WriteFile calls when b is longer than
+// one call takes. It returns n < len(b) only with an error: ErrTimeout when
+// Config.Timeout > 0 and a call wrote fewer bytes than it was given in that
+// time, an error wrapping io.ErrShortWrite when that happens with no
+// time-out set.
 func (p *port) Write(b []byte) (n int, err error) {
-	b = clampIO(b)
-	var done uint32
-	if err = syscall.WriteFile(p.handle, b, &done, nil); err != nil {
-		return 0, fmt.Errorf("serial: write: %w", err)
-	}
-	return int(done), nil
+	return writeChunks(b, maxIO, p.timedWrite, func(chunk []byte) (int, error) {
+		var done uint32
+		if err := writeFile(p.handle, chunk, &done, nil); err != nil {
+			return 0, err
+		}
+		return int(done), nil
+	})
 }
 
 // foreverWait is how long one ReadFile waits with Timeout == 0.
@@ -119,8 +130,8 @@ const foreverWait = (c_MAXDWORD - 1) * time.Millisecond
 // maxIO is the largest length ReadFile and WriteFile take (a DWORD).
 var maxIO uint64 = math.MaxUint32
 
-// clampIO limits b to what one ReadFile or WriteFile call can transfer;
-// the caller sees a short count and continues as io.Reader/io.Writer allow.
+// clampIO limits b to what one ReadFile call can transfer; the caller sees
+// a short count and reads again, as io.Reader allows.
 func clampIO(b []byte) []byte {
 	if uint64(len(b)) > maxIO {
 		return b[:maxIO]
@@ -153,6 +164,7 @@ func (p *port) setTimeouts(c *Config) error {
 		timeout := timeoutMs(c.Timeout)
 		timeouts.ReadTotalTimeoutConstant = timeout
 		timeouts.WriteTotalTimeoutConstant = timeout
+		p.timedWrite = true
 	} else {
 		p.waitForData = true
 	}

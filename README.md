@@ -26,8 +26,8 @@ If you are looking for a maintained alternative to [goburrow/serial](https://git
 - **Sensible defaults** — Zero values give you 9600 8N1; use the `modbus` package for Modbus RTU defaults (19200 8E1).
 - **Clear timeouts and errors** — Read timeouts return `serial.ErrTimeout`, detectable with `errors.Is`.
 - **Documented concurrency and close semantics** — One reader and one writer may run concurrently; ownership and `Close` behavior are spelled out.
-- **Cross-platform** — Linux, macOS, Windows, FreeBSD, NetBSD and OpenBSD.
-- **Testable without hardware** — A PTY loopback test runs on Linux, macOS and BSD.
+- **Cross-platform** — Backends for Linux, macOS, Windows, FreeBSD, NetBSD and OpenBSD. Linux and macOS are tested in CI; the others are tested in part or only built: see [Supported platforms](#supported-platforms).
+- **Testable without hardware** — The tests run over pseudo-terminals on Linux and macOS.
 
 ---
 
@@ -127,7 +127,7 @@ Several Go serial libraries exist. This table compares go-serial with [bugst/go-
 ## What this library is
 
 - **Generic serial transport**: open, configure, read, write, and close serial ports.
-- **Cross-platform**: Linux, macOS, Windows, and BSD variants.
+- **Cross-platform**: Linux, macOS, Windows, and BSD variants, at the levels listed under [Supported platforms](#supported-platforms).
 - **Protocol-neutral**: no built-in protocol logic. Use it for any serial-based protocol (custom, Modbus RTU, etc.).
 - **RS-485**: optional RS-485 driver configuration where the OS supports it.
 
@@ -228,7 +228,9 @@ cfg.Parity = serial.ParityNone
   `Read` waits may wait for that `Read` to return, so use a finite `Timeout`
   when reading and writing from separate goroutines.
 - **Timeouts** — `Config.Timeout` applies to **Read** on all platforms. On
-  **Windows**, the same timeout is also applied to Write when `Timeout > 0`.
+  **Windows**, the same timeout is also applied to Write when `Timeout > 0`:
+  a Write that runs out of time returns the number of bytes written and
+  `ErrTimeout`.
   On **POSIX** (Linux/macOS/BSD), Write has no library-applied timeout: it
   blocks while the driver's output buffer is full and returns only once all
   bytes are written (or with an error). `Timeout == 0` means Read may block indefinitely until data
@@ -248,7 +250,7 @@ Package godoc (`serial.go`) restates the same contract.
 
 ### Timeout and error handling
 
-Set `Config.Timeout` to influence blocking I/O timeout behavior. Read timeout behavior is supported across platforms; write timeout behavior may depend on the platform and driver. When a read times out, the port returns `serial.ErrTimeout`. Use `errors.Is` to detect it:
+Set `Config.Timeout` to bound blocking I/O. It applies to `Read` on every platform and to `Write` on Windows only. When a read times out, the port returns `serial.ErrTimeout`; a Windows write that times out returns it with the number of bytes written. Use `errors.Is` to detect it:
 
 ```go
 package main
@@ -326,12 +328,29 @@ RS-485 options live on `Config.RS485`. Set `RS485.Enabled` to true and configure
 
 ### Supported platforms
 
-- Linux
-- macOS (Darwin)
-- Windows
-- FreeBSD, NetBSD, OpenBSD
+The library has a backend for each platform below. They are not at the same level: the table says what CI runs.
 
-On Windows, any positive baud rate is passed to the driver; acceptance is driver-dependent. On POSIX, supported baud rates are platform-specific (see your OS termios).
+| Platform | Level | What CI does |
+|---|---|---|
+| Linux | Tested over pseudo-terminals | Every pull request that changes code runs all tests against the kernel's tty layer, with the race detector, on Go 1.26 and 1.27. Nightly: the chaos tests with more rounds, the fuzz targets, and all tests as a 32-bit (386) binary. Built and vetted for amd64, arm (v7) and arm64 |
+| macOS | Tested over pseudo-terminals | The same pull requests run all tests with the race detector; nightly, the chaos tests. Built and vetted for amd64 and arm64 |
+| Windows | Built; tested without a port | Built and vetted for amd64 and arm64. A `windows-latest` job runs the tests that need no port: the time-out and DCB conversions, and `Write` on a replaced `WriteFile`. No test opens a port, so `Open`, `Read` and `Close` on a device are not exercised |
+| FreeBSD | Built, not run | Built and vetted for amd64 and arm64. No job runs its tests |
+| NetBSD | Built, not run | Built and vetted for amd64. No job runs its tests |
+| OpenBSD | Built, not run | Built and vetted for amd64. Nothing has been run on OpenBSD. It waits for I/O with the `select` code that the macOS tests run |
+
+No test on any platform uses a physical UART, a USB adapter or an RS-485 transceiver: the baud rate, parity and stop bits are never observed on a line.
+
+Known not to work:
+
+- **RS-485 outside Linux.** With `Config.RS485.Enabled`, `Open` fails with `ErrUnsupportedPlatform` on macOS and the BSDs, and the Windows backend ignores the setting.
+- **`Close` during I/O on Windows.** It does not cancel a `Read` or `Write`; see [Ownership, concurrency, and Close](#ownership-concurrency-and-close).
+- **Descriptors at or above 1024 on macOS and OpenBSD.** `Read`, and a `Write` that has to wait, fail with `EINVAL`, because `select` cannot watch them.
+- **OpenBSD with a release before v0.4.1 built with Go 1.26 or later.** `Read` fails there with "function not implemented". Use v0.4.1 or later.
+
+[LIMITATIONS.md](LIMITATIONS.md) has the differences between the platforms and the list of what is not verified.
+
+On Windows, any positive baud rate is passed to the driver; acceptance is driver-dependent. On POSIX, supported baud rates are platform-specific (see your OS termios). The address is a device path on POSIX systems and must be a character device. On Windows it is passed to `CreateFile` as given: `COM1` to `COM9` work as they are, and Win32 needs the form `\\.\COM10` for higher port numbers.
 
 ## Automated tests
 
@@ -350,7 +369,7 @@ make coverage    # library coverage report (example/ excluded)
 make check       # fmt, tidy, vet, lint, tests, race, coverage
 ```
 
-Tests do not require physical serial hardware. On Linux, macOS, and BSD, **`TestReadWrite`** creates a programmatic PTY loopback via `/dev/ptmx` and exercises open, read, write, and close. The test skips when PTY creation is unavailable (e.g. restricted environments).
+Tests do not require physical serial hardware. On Linux, macOS and FreeBSD, **`TestReadWrite`** creates a programmatic PTY loopback via `/dev/ptmx` and exercises open, read, write, and close; CI runs it on Linux and macOS. The test skips when PTY creation is unavailable (e.g. restricted environments, NetBSD and OpenBSD).
 
 **Chaos and fuzz tests** (`TestChaos*`, `Fuzz*`) inject faults over PTYs: random line fragmentation, hangups mid-stream, signal storms during blocking reads, ports above `FD_SETSIZE`, write backpressure, random configs and open/close churn. Each logs its seed; reproduce or scale a run with:
 
@@ -414,11 +433,11 @@ Not with go-serial. Pass the device path or COM port name directly. If you need 
 
 ### Which platforms are supported?
 
-Linux, macOS, Windows, FreeBSD, NetBSD and OpenBSD. See [Supported platforms](#supported-platforms).
+There are backends for Linux, macOS, Windows, FreeBSD, NetBSD and OpenBSD. Linux and macOS are tested in CI over pseudo-terminals; Windows is built and tested without a port; the BSDs are built and not run. See [Supported platforms](#supported-platforms).
 
 ### How can I test without a physical serial device?
 
-Use a PTY pair created with `socat`. The test suite also creates a PTY loopback automatically on Linux, macOS and BSD. See [Manual loopback testing](#manual-loopback-testing).
+Use a PTY pair created with `socat`. The test suite also creates a PTY loopback automatically on Linux, macOS and FreeBSD. See [Manual loopback testing](#manual-loopback-testing).
 
 ---
 

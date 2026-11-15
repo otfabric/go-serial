@@ -2,7 +2,8 @@ name: Nightly
 run-name: "Nightly on ${{ github.ref_name }}"
 
 # The extended tier: the chaos tests over pseudo-terminals with many more
-# rounds than a push runs, and every fuzz target for five minutes.
+# rounds than a pull request runs, every fuzz target for five minutes, and
+# the tests as a 32-bit binary.
 
 on:
   schedule:
@@ -36,6 +37,24 @@ jobs:
         with:
           go-version-file: go.mod
       - run: make chaos CHAOS_ITERATIONS=${{ inputs.iterations || '10' }}
+
+  # Platform width (otfabric/engineering standards/testing.md#platform-width):
+  # the wait code converts a time-out to the argument of the system call, and
+  # tv_sec has 32 bits on 32-bit Linux. ubuntu runners execute 386 binaries;
+  # the race detector does not exist for 386.
+  test-386:
+    name: Tests (linux/386)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - name: Tests on a 32-bit architecture
+        env:
+          SERIAL_REQUIRE_PTY: "1"
+        run: GOARCH=386 go test -count=1 ./...
 
   fuzz:
     name: Fuzz

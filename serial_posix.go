@@ -33,6 +33,26 @@ type port struct {
 	closed bool
 	active int
 	wake   *wakePipe // nil for ports built directly in tests
+
+	// hook is nil outside tests. Read and Write call it before each wait
+	// for the descriptor (hookWaiting) and before they unregister
+	// (hookEnding); in both cases the call still counts as active.
+	hook func(hookEvent)
+}
+
+// hookEvent names the point of a Read or Write at which port.hook is called.
+type hookEvent int
+
+const (
+	hookWaiting hookEvent = iota // about to wait for the descriptor
+	hookEnding                   // about to unregister with end
+)
+
+// event reports e to the test hook, if one is set.
+func (p *port) event(e hookEvent) {
+	if p.hook != nil {
+		p.hook(e)
+	}
 }
 
 // wakePipe lets Close interrupt a Read or Write that waits in poll/select.
@@ -108,6 +128,13 @@ func (p *port) open(c *Config) (err error) {
 	if err != nil {
 		return fmt.Errorf("serial: open %s: %w", c.Address, err)
 	}
+	// A serial port is a character device. Anything else is refused here,
+	// before a terminal setting is read or changed.
+	if err = checkCharDevice(p.fd); err != nil {
+		_ = syscall.Close(p.fd)
+		p.fd = -1
+		return fmt.Errorf("serial: open %s: %w", c.Address, err)
+	}
 	// Backup current termios to restore on closing.
 	p.backupTermios()
 	if err = p.setTermios(termios); err != nil {
@@ -126,6 +153,20 @@ func (p *port) open(c *Config) (err error) {
 	}
 	p.timeout = c.Timeout
 	return
+}
+
+// checkCharDevice reports whether fd refers to a character device. For any
+// other file type the error wraps ENOTTY, the error setting termios on such
+// a file gives.
+func checkCharDevice(fd int) error {
+	var st syscall.Stat_t
+	if err := syscall.Fstat(fd, &st); err != nil {
+		return err
+	}
+	if st.Mode&syscall.S_IFMT != syscall.S_IFCHR {
+		return fmt.Errorf("not a character device: %w", syscall.ENOTTY)
+	}
+	return nil
 }
 
 // Close restores the saved termios settings and closes the descriptor. A
@@ -188,6 +229,7 @@ func (p *port) begin() (fd, wake int, err error) {
 
 // end unregisters an I/O call started with begin.
 func (p *port) end() {
+	p.event(hookEnding)
 	p.mu.Lock()
 	p.active--
 	if p.active == 0 && p.idle != nil {
@@ -208,6 +250,7 @@ func (p *port) Read(b []byte) (n int, err error) {
 		deadline = time.Now().Add(p.timeout)
 	}
 	for {
+		p.event(hookWaiting)
 		ready, werr := waitFD(fd, wake, false, deadline)
 		if werr == errWoken {
 			return 0, ErrClosed
@@ -257,6 +300,7 @@ func (p *port) Write(b []byte) (n int, err error) {
 		}
 		switch {
 		case werr == syscall.EAGAIN:
+			p.event(hookWaiting)
 			if _, err = waitFD(fd, wake, true, time.Time{}); err != nil {
 				if err == errWoken {
 					return n, ErrClosed

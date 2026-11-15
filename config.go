@@ -10,7 +10,9 @@ import (
 // Config describes how a serial port should be opened and configured.
 // Zero-value policy: Open normalizes before use. BaudRate(0)→9600, DataBits(0)→8, StopBits(0)→1, Parity("")→none.
 type Config struct {
-	// Device path (e.g. /dev/ttyUSB0 on Unix, COM1 on Windows).
+	// Device path (e.g. /dev/ttyUSB0 on Unix, COM1 on Windows). On POSIX
+	// systems Open fails unless the path is a character device. On Windows
+	// the name is passed to CreateFile as given.
 	Address string
 	// Baud rate. Zero = 9600. Use constants or BaudRate(n) for custom rates.
 	BaudRate BaudRate
@@ -20,7 +22,8 @@ type Config struct {
 	StopBits StopBits
 	// Parity. Empty = none. Use constants or ParseParity for CLI input.
 	Parity Parity
-	// Timeout for read/write. Zero (NoTimeout) = no deadline. Behavior is platform-dependent.
+	// Timeout for Read, and on Windows for Write as well. Zero (NoTimeout) =
+	// no deadline. See the package documentation.
 	Timeout time.Duration
 	// RS-485 options. Ignored unless Enabled is true.
 	RS485 RS485Config

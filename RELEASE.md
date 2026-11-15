@@ -1,5 +1,44 @@
 # go-serial Releases
 
+## v0.4.1
+
+**Date:** 2026-11-15
+**Previous release:** v0.4.0
+
+## Summary
+
+The Windows `Write` returns an error with a short count, OpenBSD waits for I/O with `select`, and the README states what is tested on each platform. No exported identifier changes.
+
+## Changes
+
+### Fixes
+
+- Windows: `Write` returned a short count with a nil error when `Config.Timeout` passed before all bytes were written. It now returns the count with `ErrTimeout`, as ERRORS.md and the comment on `ErrTimeout` said. A short count with no time-out set comes with an error wrapping `io.ErrShortWrite`. Code that took a nil error as "all bytes sent" now sees the error; code that wrote the rest again after a short count gets `ErrTimeout` instead and decides for itself.
+- Windows: a buffer longer than one `WriteFile` call takes (2^32-1 bytes) is written in several calls. Before, `Write` wrote the first part and returned its length with a nil error.
+- OpenBSD: `Read`, and a `Write` that had to wait for room, failed with "function not implemented". The wait called `poll` by its system call number, and on OpenBSD Go's `syscall` package carries out such calls for ioctl only. The wait now uses `syscall.Select`, with the code the macOS backend uses. This is cross-compiled and vetted, not run on OpenBSD. A descriptor at or above `FD_SETSIZE` (1024) fails with `EINVAL` there, as on macOS.
+
+### Changed
+
+- POSIX: `Open` checks that the opened path is a character device before it reads or changes a terminal setting. Any other file is refused with an error wrapping `ENOTTY`. Such a path could not be opened as a port before either: it failed one step later, with the error of the termios call. `/dev/null` and other character devices that are not terminals fail at the termios call, as before.
+
+### Documentation
+
+- README: a table with the level of each platform (tested over pseudo-terminals, tested without a port, built and not run) and a list of what is known not to work.
+- SECURITY.md: the supported line is 0.4.x; new sections on what the library trusts, its resource use and its known limits.
+- ARCHITECTURE.md describes the mutex and the wake pipe of v0.4.0; before, it said that production code holds no locks and that `Close` must not run during I/O.
+- TESTING.md: where each group of tests runs, and the lifecycle contract tests (rows L1 to L16) with what applies to `Port`.
+- LIMITATIONS.md: the Windows port is opened exclusively and the POSIX ones are not; on Windows, port numbers above 9 need the form `\\.\COM10`; what CI runs on macOS, Windows and the BSDs. The "Known defects" entry is gone: the macOS failure of `TestChaosOpenCloseChurn` was in the test.
+- CONTRIBUTING.md lists what `make check` runs.
+
+### Tests and CI
+
+- `TestCloseUnblocksRead` and `TestCloseUnblocksWrite` no longer sleep. They hold the call at an unexported hook and assert that `Close` does not return, and leaves the descriptor open, until the `Read` or `Write` has let go of it.
+- `TestChaosOpenCloseChurn` failed on current macOS: the tests opened `/dev/ptmx` from eight goroutines at once. The test helper now opens it from one at a time, and the channel that collects the errors holds them all.
+- CI vets every cross-build target, which compiles its test files, and builds NetBSD and OpenBSD too. A `windows-latest` job runs the tests that need no port. The nightly workflow runs the tests as a linux/386 binary.
+- The release workflow builds and tests go-modbus against the release commit before it creates the tag. go-canbus is not listed: its SocketCAN tests need a kernel with AF_CAN, which that job does not set up.
+
+---
+
 ## v0.4.0
 
 **Date:** 2026-11-14

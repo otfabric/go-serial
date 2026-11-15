@@ -24,4 +24,10 @@ jobs:
       bump: ${{ inputs.bump }}
       release-name-prefix: go-serial
       update-major-tag: false
+      # A module that requires go-serial directly: built, vetted and tested
+      # against the release commit before the tag is created. go-canbus also
+      # requires it but is not listed: its SocketCAN tests need a kernel with
+      # AF_CAN, which this job does not set up.
+      consumers: |
+        otfabric/go-modbus
     secrets: inherit

@@ -2,7 +2,7 @@
 
 | Error | Returned when | Retryable |
 |---|---|---|
-| `ErrTimeout` | A read or write did not complete before the deadline. `Config.Timeout` influences this and semantics are platform-dependent: on most platforms a read that times out with no data returns it; write behaviour may differ. A zero timeout means no deadline | Yes |
+| `ErrTimeout` | `Read`: no data arrived within `Config.Timeout`. `Write` on Windows: `Config.Timeout` passed before all bytes were written; `n` is the number that were, and the rest of the buffer was not sent. The POSIX `Write` has no deadline and does not return it. A zero timeout means no deadline | `Read`: yes. `Write`: send the bytes after the first `n` again, if the protocol allows a message to arrive in parts |
 | `ErrInvalidConfig` | Config validation failed, e.g. an empty address or unsupported parity | No |
 | `ErrUnsupportedPlatform` | `Open` on an operating system that is not supported, or with `Config.RS485.Enabled` on a system without an RS-485 ioctl (macOS, the BSDs) | No |
 | `ErrClosed` | POSIX: `Read` or `Write` on a closed port, or a blocked `Read` or `Write` when `Close` ran in another goroutine. `n` may be non-zero for `Write` | No |

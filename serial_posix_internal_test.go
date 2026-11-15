@@ -8,6 +8,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -117,6 +118,61 @@ func TestOpenNotATerminal(t *testing.T) {
 	}
 	if p.fd != -1 || p.oldTermios != nil {
 		t.Fatalf("port not reset after failed open: fd=%d oldTermios=%v", p.fd, p.oldTermios)
+	}
+}
+
+// TestOpenNotACharacterDevice: a path that opens but is not a character
+// device is refused before a terminal setting is read or changed. The error
+// wraps ENOTTY and names the check, and the descriptor is released.
+func TestOpenNotACharacterDevice(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "file")
+	if err := os.WriteFile(file, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	paths := map[string]string{"regular file": file}
+	fifo := filepath.Join(dir, "fifo")
+	if err := syscall.Mkfifo(fifo, 0o600); err != nil {
+		t.Logf("no FIFO case: mkfifo: %v", err)
+	} else {
+		paths["FIFO"] = fifo
+	}
+	for name, path := range paths {
+		t.Run(name, func(t *testing.T) {
+			before := openFDs()
+			p := newPort()
+			err := p.open(&Config{Address: path, BaudRate: 9600})
+			if err == nil {
+				_ = p.Close()
+				t.Fatal("open succeeded")
+			}
+			if !errors.Is(err, syscall.ENOTTY) || !strings.Contains(err.Error(), "not a character device") {
+				t.Fatalf("open = %v; want the character device check, wrapping ENOTTY", err)
+			}
+			if p.fd != -1 || p.oldTermios != nil {
+				t.Fatalf("port not reset after failed open: fd=%d oldTermios=%v", p.fd, p.oldTermios)
+			}
+			if after := openFDs(); after > before {
+				t.Fatalf("open descriptors grew from %d to %d", before, after)
+			}
+			if _, err := Open(&Config{Address: path}); !errors.Is(err, syscall.ENOTTY) || errors.Is(err, ErrInvalidConfig) {
+				t.Fatalf("Open = %v; want an error wrapping ENOTTY that is not ErrInvalidConfig", err)
+			}
+		})
+	}
+}
+
+func TestCheckCharDevice(t *testing.T) {
+	if err := checkCharDevice(closedFD(t)); !errors.Is(err, syscall.EBADF) {
+		t.Fatalf("closed descriptor: %v, want EBADF", err)
+	}
+	null, err := os.Open(os.DevNull)
+	if err != nil {
+		t.Skip(err)
+	}
+	defer func() { _ = null.Close() }()
+	if err := checkCharDevice(int(null.Fd())); err != nil {
+		t.Fatalf("%s: %v, want nil", os.DevNull, err)
 	}
 }
 

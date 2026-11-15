@@ -18,7 +18,7 @@ One Read and one Write may run concurrently on the same Port (full-duplex). Do n
 
 #### Timeouts and Close {#hdr-Timeouts_and_Close}
 
-Config.Timeout applies to Read on all platforms; Write timeout is honored on Windows when Timeout > 0, and is not applied on POSIX, where Write blocks while the driver's output buffer is full and returns once all bytes are written or an error occurs. Timeout == 0 means Read may block indefinitely until data arrives (or the fd/handle is closed by the OS).
+Config.Timeout applies to Read on all platforms; Write timeout is honored on Windows when Timeout > 0, where a Write that runs out of time returns the number of bytes written and ErrTimeout. It is not applied on POSIX, where Write blocks while the driver's output buffer is full and returns once all bytes are written or an error occurs. On every platform Write returns n \< len(b) only with an error. Timeout == 0 means Read may block indefinitely until data arrives (or the fd/handle is closed by the OS).
 
 Close restores prior termios/DCB settings when possible, then closes the fd/handle. Close may be called more than once and from several goroutines. On POSIX systems Close also cancels I/O: a Read or Write blocked in another goroutine returns ErrClosed, Close waits for it to let go of the descriptor, and Read and Write after Close return ErrClosed. On Windows Close is not a cancel and must not run concurrently with Read or Write; prefer a finite Timeout there.
 
@@ -42,10 +42,12 @@ NoTimeout means no read/write deadline (block until I/O completes).
 
 ```go
 var (
-	// ErrTimeout is returned when a read or write does not complete before the deadline.
-	// Config.Timeout influences read/write behavior; semantics are platform-dependent. On most
-	// platforms, ErrTimeout is returned when a read times out with no data; write timeout behavior
-	// may differ. Zero timeout means no deadline (block until I/O completes). Use errors.Is(err, serial.ErrTimeout) to detect.
+	// ErrTimeout is returned by Read when no data arrived within
+	// Config.Timeout, and on Windows by Write when that time passed before
+	// all bytes were written: the count returned with it says how many
+	// were. The POSIX Write has no deadline and does not return it. Zero
+	// timeout means no deadline (block until I/O completes). Use
+	// errors.Is(err, serial.ErrTimeout) to detect.
 	ErrTimeout = errors.New("serial: timeout")
 
 	// ErrInvalidConfig is returned when config validation fails (e.g. empty address,
@@ -165,7 +167,9 @@ UnmarshalText implements encoding.TextUnmarshaler. Accepts a decimal baud rate (
 
 ```go
 type Config struct {
-	// Device path (e.g. /dev/ttyUSB0 on Unix, COM1 on Windows).
+	// Device path (e.g. /dev/ttyUSB0 on Unix, COM1 on Windows). On POSIX
+	// systems Open fails unless the path is a character device. On Windows
+	// the name is passed to CreateFile as given.
 	Address string
 	// Baud rate. Zero = 9600. Use constants or BaudRate(n) for custom rates.
 	BaudRate BaudRate
@@ -175,7 +179,8 @@ type Config struct {
 	StopBits StopBits
 	// Parity. Empty = none. Use constants or ParseParity for CLI input.
 	Parity Parity
-	// Timeout for read/write. Zero (NoTimeout) = no deadline. Behavior is platform-dependent.
+	// Timeout for Read, and on Windows for Write as well. Zero (NoTimeout) =
+	// no deadline. See the package documentation.
 	Timeout time.Duration
 	// RS-485 options. Ignored unless Enabled is true.
 	RS485 RS485Config
