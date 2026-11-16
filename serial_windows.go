@@ -8,14 +8,17 @@ import (
 	"errors"
 	"fmt"
 	"math"
-	"sync"
 	"syscall"
 	"time"
 	"unsafe"
 )
 
 type port struct {
-	mu     sync.Mutex // guards handle against concurrent Close calls
+	// gate counts the Read and Write calls in progress. Close shuts it,
+	// cancels the calls with CancelIoEx until they have returned, and only
+	// then restores the settings and closes the handle, so a handle is
+	// never used after it was closed.
+	gate   ioGate
 	handle syscall.Handle
 	// waitForData makes Read retry when ReadFile returns no bytes: set for
 	// Timeout == 0, where Read waits until data arrives.
@@ -69,21 +72,53 @@ func (p *port) open(c *Config) (err error) {
 	return
 }
 
-func (p *port) Close() (err error) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
+// cancelEvery is how often Close cancels the I/O of the port again while a
+// Read or Write has not returned. A call can register just before it starts
+// ReadFile or WriteFile, after the first cancel, and a Write can wait for a
+// Read on the synchronous handle and start its WriteFile once that Read was
+// cancelled.
+const cancelEvery = 10 * time.Millisecond
+
+// Close cancels a Read or Write in progress, which returns ErrClosed, and
+// waits until it has returned. It then restores the saved timeouts and DCB
+// and closes the handle. It is safe to call more than once and from several
+// goroutines: a second Close returns nil at once, also while the first one
+// waits.
+func (p *port) Close() error {
+	if !p.gate.shut(func() { _ = cancelIoEx(p.handle, nil) }, cancelEvery) {
+		return nil
+	}
 	if p.handle == syscall.InvalidHandle {
 		return nil
 	}
-	err1 := SetCommTimeouts(p.handle, &p.oldTimeouts)
-	err2 := SetCommState(p.handle, &p.oldDCB)
-	err3 := syscall.CloseHandle(p.handle)
+	var errs []error
+	if err := SetCommTimeouts(p.handle, &p.oldTimeouts); err != nil {
+		errs = append(errs, fmt.Errorf("serial: close: restore comm timeouts: %w", err))
+	}
+	if err := SetCommState(p.handle, &p.oldDCB); err != nil {
+		errs = append(errs, fmt.Errorf("serial: close: restore comm state: %w", err))
+	}
+	if err := syscall.CloseHandle(p.handle); err != nil {
+		errs = append(errs, fmt.Errorf("serial: close: %w", err))
+	}
 	p.handle = syscall.InvalidHandle
-	return errors.Join(err1, err2, err3)
+	return errors.Join(errs...)
 }
 
-// Read reads from the serial port. It blocks until data is available or the configured timeout expires.
+// readFile is ReadFile, and cancelIoEx is CancelIoEx; tests replace them.
+var (
+	readFile   = syscall.ReadFile
+	cancelIoEx = syscall.CancelIoEx
+)
+
+// Read reads from the serial port. It blocks until data is available or the
+// configured timeout expires. It returns ErrClosed when Close ran before or
+// during the call.
 func (p *port) Read(b []byte) (n int, err error) {
+	if err = p.gate.begin(); err != nil {
+		return 0, err
+	}
+	defer p.gate.end()
 	if len(b) == 0 {
 		return 0, nil
 	}
@@ -91,11 +126,17 @@ func (p *port) Read(b []byte) (n int, err error) {
 	for {
 		start := time.Now()
 		var done uint32
-		if err = syscall.ReadFile(p.handle, b, &done, nil); err != nil {
+		if err = readFile(p.handle, b, &done, nil); err != nil {
+			if p.gate.isClosed() {
+				return 0, ErrClosed // cancelled by Close
+			}
 			return 0, fmt.Errorf("serial: read: %w", err)
 		}
 		if done > 0 {
 			return int(done), nil
+		}
+		if p.gate.isClosed() {
+			return 0, ErrClosed
 		}
 		// With Timeout == 0, ReadFile gives up after ReadTotalTimeoutConstant
 		// (about 49.7 days) and Read waits again. A zero-byte return before
@@ -113,15 +154,26 @@ var writeFile = syscall.WriteFile
 // one call takes. It returns n < len(b) only with an error: ErrTimeout when
 // Config.Timeout > 0 and a call wrote fewer bytes than it was given in that
 // time, an error wrapping io.ErrShortWrite when that happens with no
-// time-out set.
+// time-out set, and ErrClosed when Close ran before or during the call.
 func (p *port) Write(b []byte) (n int, err error) {
-	return writeChunks(b, maxIO, p.timedWrite, func(chunk []byte) (int, error) {
+	if err = p.gate.begin(); err != nil {
+		return 0, err
+	}
+	defer p.gate.end()
+	n, err = writeChunks(b, maxIO, p.timedWrite, func(chunk []byte) (int, error) {
+		if p.gate.isClosed() {
+			return 0, ErrClosed
+		}
 		var done uint32
 		if err := writeFile(p.handle, chunk, &done, nil); err != nil {
 			return 0, err
 		}
 		return int(done), nil
 	})
+	if err != nil && p.gate.isClosed() {
+		return n, ErrClosed // cancelled by Close, or Close ran between two pieces
+	}
+	return n, err
 }
 
 // foreverWait is how long one ReadFile waits with Timeout == 0.
@@ -222,14 +274,10 @@ func (p *port) setSerialConfig(c *Config) error {
 	return nil
 }
 
-func newHandle(c *Config) (handle syscall.Handle, err error) {
-	// UTF16PtrFromString rejects addresses containing NUL instead of
-	// panicking like the deprecated StringToUTF16Ptr.
-	name, err := syscall.UTF16PtrFromString(c.Address)
-	if err != nil {
-		return 0, fmt.Errorf("serial: open %q: %w", c.Address, err)
-	}
-	handle, err = syscall.CreateFile(
+// createFile opens name for reading and writing with CreateFile; tests
+// replace it.
+var createFile = func(name *uint16) (syscall.Handle, error) {
+	return syscall.CreateFile(
 		name,
 		syscall.GENERIC_READ|syscall.GENERIC_WRITE,
 		0,                     // mode
@@ -237,6 +285,24 @@ func newHandle(c *Config) (handle syscall.Handle, err error) {
 		syscall.OPEN_EXISTING, // create mode
 		0,                     // attributes
 		0)                     // templates
+}
+
+// newHandle opens the port. Address must be a device name, which is opened
+// in the device namespace, unless UncheckedAddress is set.
+func newHandle(c *Config) (handle syscall.Handle, err error) {
+	address := c.Address
+	if !c.UncheckedAddress {
+		if address, err = windowsDeviceName(c.Address); err != nil {
+			return 0, err
+		}
+	}
+	// UTF16PtrFromString rejects addresses containing NUL instead of
+	// panicking like the deprecated StringToUTF16Ptr.
+	name, err := syscall.UTF16PtrFromString(address)
+	if err != nil {
+		return 0, fmt.Errorf("serial: open %q: %w", c.Address, err)
+	}
+	handle, err = createFile(name)
 	if err != nil {
 		return 0, fmt.Errorf("serial: open %s: %w", c.Address, err)
 	}

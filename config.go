@@ -11,8 +11,15 @@ import (
 // Zero-value policy: Open normalizes before use. BaudRate(0)→9600, DataBits(0)→8, StopBits(0)→1, Parity("")→none.
 type Config struct {
 	// Device path (e.g. /dev/ttyUSB0 on Unix, COM1 on Windows). On POSIX
-	// systems Open fails unless the path is a character device. On Windows
-	// the name is passed to CreateFile as given.
+	// systems Open fails unless the path is a character device.
+	//
+	// On Windows Address is a device name: NAME, NAME: (COM1, COM1:,
+	// COM10), \\.\NAME or \\?\NAME (\\.\COM10, a device interface name),
+	// \\.\Global\NAME or \\.\GLOBALROOT\Device\NAME, where NAME holds no
+	// backslash, slash or colon. Open opens it in the device namespace, as
+	// \\.\NAME, so port numbers above 9 need no prefix. Any other form fails
+	// with a *ConfigError wrapping ErrInvalidConfig before anything is
+	// opened, unless UncheckedAddress is set.
 	Address string
 	// Baud rate. Zero = 9600. Use constants or BaudRate(n) for custom rates.
 	BaudRate BaudRate
@@ -27,6 +34,24 @@ type Config struct {
 	Timeout time.Duration
 	// RS-485 options. Ignored unless Enabled is true.
 	RS485 RS485Config
+	// VerifySettings makes Open read the settings back from the driver
+	// after setting them, and fail when the port did not take them: a
+	// *ConfigError wrapping ErrInvalidConfig names the field and what the
+	// port reports, and the port is closed. Compared are the speed, the
+	// data bits, the stop bits and the parity and, with RS485.Enabled, the
+	// two RS-485 delays. POSIX systems only; on Windows SetCommState
+	// reports a setting the driver refuses as an error, and the field has
+	// no effect. A pseudo-terminal on Linux takes 8 data bits without
+	// parity whatever is asked: with VerifySettings, other data bits or a
+	// parity fail there.
+	VerifySettings bool
+	// UncheckedAddress makes the Windows backend pass Address to
+	// CreateFile as given, as releases before v0.5.0 did, instead of
+	// accepting a device name only. CreateFile then opens whatever object
+	// the name refers to before the backend can tell whether it is a serial
+	// port: set it only for an address from a trusted source. It has no
+	// effect on POSIX systems.
+	UncheckedAddress bool
 }
 
 // MaxRS485Delay is the largest RS485Config.DelayRtsBeforeSend or

@@ -30,11 +30,14 @@ indefinitely until data arrives (or the fd/handle is closed by the OS).
 
 Close restores prior termios/DCB settings when possible, then closes the
 fd/handle. Close may be called more than once and from several goroutines.
-On POSIX systems Close also cancels I/O: a Read or Write blocked in another
-goroutine returns ErrClosed, Close waits for it to let go of the descriptor,
-and Read and Write after Close return ErrClosed. On Windows Close is not a
-cancel and must not run concurrently with Read or Write; prefer a finite
-Timeout there.
+Close also cancels I/O: a Read or Write in progress in another goroutine
+returns ErrClosed, Close waits until it has returned before it closes the
+descriptor or handle, and Read and Write after Close return ErrClosed. On
+Windows the cancel is CancelIoEx on the port's handle.
+
+On Windows Config.Address must be a device name such as COM3 or \\.\COM10;
+see Config.Address and Config.UncheckedAddress. Config.VerifySettings makes
+Open on POSIX systems check that the port took the settings.
 
 On POSIX systems Read follows the io.Reader contract when the line goes
 away: it returns n == 0 with io.EOF once the other end hung up (an

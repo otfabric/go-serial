@@ -10,8 +10,10 @@ import (
 	"math"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"testing"
+	"testing/synctest"
 	"time"
 	"unsafe"
 )
@@ -142,5 +144,224 @@ func TestWriteError(t *testing.T) {
 	}
 	if !strings.HasPrefix(err.Error(), "serial: write: ") {
 		t.Fatalf("error text %q, want the prefix \"serial: write: \"", err)
+	}
+}
+
+// winResult is the result of a Read or Write made in a goroutine.
+type winResult struct {
+	n   int
+	err error
+}
+
+// fakeCancelIO replaces ReadFile, WriteFile and CancelIoEx for one test. A
+// ReadFile or WriteFile call blocks until CancelIoEx has been called need
+// times, then fails with ERROR_OPERATION_ABORTED, as a call that CancelIoEx
+// ended does. Run it inside a synctest bubble.
+type fakeCancelIO struct {
+	calls   atomic.Int32 // ReadFile and WriteFile calls
+	inside  atomic.Int32 // calls that have not returned yet
+	cancels atomic.Int32
+	aborted chan struct{}
+}
+
+func installCancelIO(t *testing.T, need int32) *fakeCancelIO {
+	t.Helper()
+	f := &fakeCancelIO{aborted: make(chan struct{})}
+	origRead, origWrite, origCancel := readFile, writeFile, cancelIoEx
+	t.Cleanup(func() { readFile, writeFile, cancelIoEx = origRead, origWrite, origCancel })
+	block := func(done *uint32) error {
+		f.calls.Add(1)
+		f.inside.Add(1)
+		defer f.inside.Add(-1)
+		<-f.aborted
+		*done = 0
+		return syscall.ERROR_OPERATION_ABORTED
+	}
+	readFile = func(_ syscall.Handle, _ []byte, done *uint32, _ *syscall.Overlapped) error { return block(done) }
+	writeFile = func(_ syscall.Handle, _ []byte, done *uint32, _ *syscall.Overlapped) error { return block(done) }
+	cancelIoEx = func(syscall.Handle, *syscall.Overlapped) error {
+		if f.cancels.Add(1) == need {
+			close(f.aborted)
+		}
+		return nil
+	}
+	return f
+}
+
+// TestCloseCancelsIO is row L3 and L4 of the lifecycle matrix on Windows:
+// Close during a Read or a Write that waits in ReadFile or WriteFile
+// cancels it with CancelIoEx, the call returns ErrClosed, and Close returns
+// only after the call has. Later calls return ErrClosed without reaching
+// the driver, and a second Close returns nil.
+func TestCloseCancelsIO(t *testing.T) {
+	for _, op := range []string{"Read", "Write"} {
+		t.Run(op, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				f := installCancelIO(t, 1)
+				p := &port{handle: syscall.InvalidHandle, waitForData: true}
+				ch := make(chan winResult, 1)
+				go func() {
+					var r winResult
+					if op == "Read" {
+						r.n, r.err = p.Read(make([]byte, 8))
+					} else {
+						r.n, r.err = p.Write(make([]byte, 8))
+					}
+					ch <- r
+				}()
+				synctest.Wait() // the call waits in the driver
+				if err := p.Close(); err != nil {
+					t.Fatalf("Close: %v", err)
+				}
+				if n := f.inside.Load(); n != 0 {
+					t.Fatalf("Close returned while %s was in the driver", op)
+				}
+				if r := <-ch; r.n != 0 || !errors.Is(r.err, ErrClosed) {
+					t.Fatalf("%s = %d, %v; want 0, ErrClosed", op, r.n, r.err)
+				}
+				if n := f.cancels.Load(); n != 1 {
+					t.Fatalf("CancelIoEx called %d times, want 1", n)
+				}
+				if _, err := p.Read(make([]byte, 1)); !errors.Is(err, ErrClosed) {
+					t.Fatalf("Read after Close = %v, want ErrClosed", err)
+				}
+				if _, err := p.Read(nil); !errors.Is(err, ErrClosed) {
+					t.Fatalf("Read of an empty buffer after Close = %v, want ErrClosed", err)
+				}
+				if _, err := p.Write([]byte("x")); !errors.Is(err, ErrClosed) {
+					t.Fatalf("Write after Close = %v, want ErrClosed", err)
+				}
+				if n := f.calls.Load(); n != 1 {
+					t.Fatalf("%d ReadFile and WriteFile calls, want 1", n)
+				}
+				if err := p.Close(); err != nil {
+					t.Fatalf("second Close: %v", err)
+				}
+			})
+		})
+	}
+}
+
+// TestCloseCancelsAgain: a Read that the first CancelIoEx missed, because
+// it entered ReadFile after it, is cancelled by a later one: Close cancels
+// every cancelEvery until the call has returned.
+func TestCloseCancelsAgain(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		f := installCancelIO(t, 2)
+		p := &port{handle: syscall.InvalidHandle, waitForData: true}
+		ch := make(chan winResult, 1)
+		go func() {
+			n, err := p.Read(make([]byte, 8))
+			ch <- winResult{n, err}
+		}()
+		synctest.Wait()
+		start := time.Now()
+		if err := p.Close(); err != nil {
+			t.Fatalf("Close: %v", err)
+		}
+		if d := time.Since(start); d != cancelEvery {
+			t.Fatalf("Close took %v, want %v", d, cancelEvery)
+		}
+		if n := f.inside.Load(); n != 0 {
+			t.Fatal("Close returned while Read was in the driver")
+		}
+		if r := <-ch; !errors.Is(r.err, ErrClosed) {
+			t.Fatalf("Read = %d, %v; want ErrClosed", r.n, r.err)
+		}
+		if n := f.cancels.Load(); n != 2 {
+			t.Fatalf("CancelIoEx called %d times, want 2", n)
+		}
+	})
+}
+
+// TestCloseBetweenWritePieces: a Write that Close reaches between two
+// WriteFile calls returns the count so far with ErrClosed and makes no
+// further call.
+func TestCloseBetweenWritePieces(t *testing.T) {
+	orig := maxIO
+	t.Cleanup(func() { maxIO = orig })
+	maxIO = 4
+	origWrite := writeFile
+	t.Cleanup(func() { writeFile = origWrite })
+	p := &port{handle: syscall.InvalidHandle}
+	calls := 0
+	writeFile = func(_ syscall.Handle, buf []byte, done *uint32, _ *syscall.Overlapped) error {
+		calls++
+		*done = uint32(len(buf))
+		if calls == 1 {
+			p.gate.mu.Lock()
+			p.gate.closed = true // as Close does, while the call is registered
+			p.gate.mu.Unlock()
+		}
+		return nil
+	}
+	n, err := p.Write(make([]byte, 10))
+	if n != 4 || !errors.Is(err, ErrClosed) || calls != 1 {
+		t.Fatalf("Write = %d, %v after %d WriteFile calls; want 4, ErrClosed after 1", n, err, calls)
+	}
+}
+
+// TestReadErrorWhileOpen: a ReadFile error on an open port keeps the
+// "serial: read: " prefix and its cause.
+func TestReadErrorWhileOpen(t *testing.T) {
+	orig := readFile
+	t.Cleanup(func() { readFile = orig })
+	readFile = func(syscall.Handle, []byte, *uint32, *syscall.Overlapped) error { return syscall.ERROR_ACCESS_DENIED }
+	p := &port{handle: syscall.InvalidHandle}
+	_, err := p.Read(make([]byte, 1))
+	if !errors.Is(err, syscall.ERROR_ACCESS_DENIED) || !strings.HasPrefix(err.Error(), "serial: read: ") {
+		t.Fatalf("Read = %v; want the prefix \"serial: read: \" and ERROR_ACCESS_DENIED", err)
+	}
+}
+
+// utf16At returns the NUL-terminated UTF-16 string at p.
+func utf16At(p *uint16) string {
+	n := 0
+	for *(*uint16)(unsafe.Add(unsafe.Pointer(p), 2*n)) != 0 {
+		n++
+	}
+	return syscall.UTF16ToString(unsafe.Slice(p, n))
+}
+
+// TestOpenAddress: Open takes a device name only and opens it in the device
+// namespace; any other address is refused before CreateFile is called.
+// With UncheckedAddress the address goes to CreateFile as given.
+func TestOpenAddress(t *testing.T) {
+	orig := createFile
+	t.Cleanup(func() { createFile = orig })
+	var names []string
+	createFile = func(name *uint16) (syscall.Handle, error) {
+		names = append(names, utf16At(name))
+		return syscall.InvalidHandle, syscall.ERROR_FILE_NOT_FOUND
+	}
+	for _, address := range []string{`\\server\share\port`, `\\.\pipe\port`, `C:\port`, `port\x`, `\\?\GLOBALROOT\Device\Mup\server\share`} {
+		_, err := Open(&Config{Address: address})
+		var ce *ConfigError
+		if !errors.Is(err, ErrInvalidConfig) || !errors.As(err, &ce) || ce.Field != "Address" {
+			t.Errorf("Open(%q) = %v; want a *ConfigError for Address wrapping ErrInvalidConfig", address, err)
+		}
+	}
+	if len(names) != 0 {
+		t.Fatalf("CreateFile called for %q", names)
+	}
+	for _, tc := range []struct {
+		cfg  Config
+		name string
+	}{
+		{Config{Address: "COM10"}, `\\.\COM10`},
+		{Config{Address: "COM3:"}, `\\.\COM3`},
+		{Config{Address: `\\.\COM12`}, `\\.\COM12`},
+		{Config{Address: `\\server\share\port`, UncheckedAddress: true}, `\\server\share\port`},
+		{Config{Address: "COM3:", UncheckedAddress: true}, "COM3:"},
+	} {
+		names = nil
+		_, err := Open(&tc.cfg)
+		if !errors.Is(err, syscall.ERROR_FILE_NOT_FOUND) || len(names) != 1 || names[0] != tc.name {
+			t.Errorf("Open(%+v) = %v, CreateFile(%q); want ERROR_FILE_NOT_FOUND from CreateFile(%q)", tc.cfg, err, names, tc.name)
+		}
+	}
+	names = nil
+	if _, err := Open(&Config{Address: "COM1\x00", UncheckedAddress: true}); err == nil || len(names) != 0 {
+		t.Fatalf("Open of an address with NUL = %v, CreateFile(%q); want an error before CreateFile", err, names)
 	}
 }

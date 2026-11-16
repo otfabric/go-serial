@@ -3,7 +3,10 @@
 package serial
 
 import (
+	"context"
 	"errors"
+	"fmt"
+	"os"
 	"runtime"
 	"testing"
 	"time"
@@ -394,5 +397,36 @@ func TestErrTimeoutSentinel(t *testing.T) {
 	}
 	if !errors.Is(ErrTimeout, ErrTimeout) {
 		t.Error("errors.Is(ErrTimeout, ErrTimeout) should be true")
+	}
+}
+
+// TestErrTimeoutIsDeadlineExceeded: ErrTimeout, bare and wrapped, matches
+// os.ErrDeadlineExceeded and reports Timeout() true, so code written for
+// the deadline errors of os and net handles it. It keeps its text and does
+// not match context.DeadlineExceeded or the other sentinels.
+func TestErrTimeoutIsDeadlineExceeded(t *testing.T) {
+	for _, err := range []error{ErrTimeout, fmt.Errorf("op: %w", ErrTimeout)} {
+		if !errors.Is(err, ErrTimeout) {
+			t.Errorf("%v: does not match ErrTimeout", err)
+		}
+		if !errors.Is(err, os.ErrDeadlineExceeded) {
+			t.Errorf("%v: does not match os.ErrDeadlineExceeded", err)
+		}
+		var timeout interface{ Timeout() bool }
+		if !errors.As(err, &timeout) || !timeout.Timeout() {
+			t.Errorf("%v: no Timeout() reporting true", err)
+		}
+		for _, other := range []error{context.DeadlineExceeded, ErrClosed, ErrInvalidConfig, ErrUnsupportedPlatform} {
+			if errors.Is(err, other) {
+				t.Errorf("%v matches %v", err, other)
+			}
+		}
+	}
+	// The match goes one way: the deadline error of a file is no ErrTimeout.
+	if fileErr := fmt.Errorf("read: %w", os.ErrDeadlineExceeded); errors.Is(fileErr, ErrTimeout) {
+		t.Errorf("%v matches ErrTimeout", fileErr)
+	}
+	if got := ErrTimeout.Error(); got != "serial: timeout" {
+		t.Errorf("ErrTimeout.Error() = %q, want \"serial: timeout\"", got)
 	}
 }

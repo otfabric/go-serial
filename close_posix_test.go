@@ -8,6 +8,7 @@ import (
 	"errors"
 	"math"
 	"os"
+	"strings"
 	"sync"
 	"syscall"
 	"testing"
@@ -277,7 +278,7 @@ func TestReadVeryLongTimeoutWaits(t *testing.T) {
 }
 
 func TestRS485Ioctl(t *testing.T) {
-	err := enableRS485(-1, &RS485Config{Enabled: true})
+	err := enableRS485(-1, &RS485Config{Enabled: true}, false)
 	if rs485Tiocs == 0 {
 		if !errors.Is(err, ErrUnsupportedPlatform) {
 			t.Fatalf("enableRS485 = %v, want ErrUnsupportedPlatform", err)
@@ -285,8 +286,12 @@ func TestRS485Ioctl(t *testing.T) {
 		return
 	}
 	// On Linux the ioctl reaches the kernel: a closed descriptor fails
-	// with EBADF, not with an unsupported-platform error.
+	// with EBADF, not with an unsupported-platform error, and the error
+	// names the operation.
 	if !errors.Is(err, syscall.EBADF) {
 		t.Fatalf("enableRS485 = %v, want EBADF", err)
+	}
+	if !strings.HasPrefix(err.Error(), "serial: enable RS485: ") {
+		t.Fatalf("enableRS485 = %q, want the prefix \"serial: enable RS485: \"", err)
 	}
 }

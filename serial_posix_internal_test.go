@@ -207,7 +207,7 @@ func TestOpenRS485Unsupported(t *testing.T) {
 }
 
 func TestEnableRS485Disabled(t *testing.T) {
-	if err := enableRS485(-1, &RS485Config{}); err != nil {
+	if err := enableRS485(-1, &RS485Config{}, true); err != nil {
 		t.Fatalf("disabled RS485 should be a no-op, got %v", err)
 	}
 }
@@ -263,13 +263,35 @@ func TestCloseReportsRestoreError(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Restoring termios on a non-tty fails; Close must still close the fd
-	// and surface the error.
+	// and surface the error, which names the operation and keeps the cause
+	// (ENOTTY on Linux, ENODEV on macOS).
+	cause := tcsetattr(fd, &syscall.Termios{})
+	if cause == nil {
+		t.Skipf("%s takes terminal settings", os.DevNull)
+	}
 	p := &port{fd: fd, oldTermios: &syscall.Termios{}}
-	if err := p.Close(); err == nil {
+	err = p.Close()
+	if err == nil {
 		t.Fatal("expected restore error")
+	}
+	if !errors.Is(err, cause) || !strings.HasPrefix(err.Error(), "serial: close: restore termios: ") {
+		t.Fatalf("Close = %q; want the prefix \"serial: close: restore termios: \" and %v", err, cause)
 	}
 	if p.fd != -1 || p.oldTermios != nil {
 		t.Fatal("port not reset after Close")
+	}
+}
+
+// TestCloseReportsCloseError: an error of close(2) names the operation and
+// keeps the cause.
+func TestCloseReportsCloseError(t *testing.T) {
+	p := &port{fd: closedFD(t)}
+	err := p.Close()
+	if !errors.Is(err, syscall.EBADF) || err.Error() != "serial: close: "+syscall.EBADF.Error() {
+		t.Fatalf("Close = %v; want \"serial: close: %v\" wrapping EBADF", err, syscall.EBADF)
+	}
+	if p.fd != -1 {
+		t.Fatalf("fd = %d after Close, want -1", p.fd)
 	}
 }
 

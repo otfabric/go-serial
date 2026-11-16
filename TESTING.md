@@ -48,7 +48,10 @@ SERIAL_CHAOS_ITERATIONS=10 go test -race -run TestChaos .
 | `TestChaos*` in `chaos_linux_test.go` | linux | Signal storms during blocking reads, descriptors above `FD_SETSIZE` |
 | `wait_select_test.go` | darwin, openbsd | Descriptors that do not fit an `FdSet` are refused; the bit arithmetic of the set |
 | `wait_poll_bsd_test.go` | freebsd, netbsd | The conversion of a time-out to `poll`'s argument. No job runs it |
-| `serial_windows_test.go` | windows | Baud rate check, the conversion of a time-out to `COMMTIMEOUTS`, the size of the DCB, and `Write` on a replaced `WriteFile`: a short count, a count out of range, a buffer written in several calls, an error. No test opens a port |
+| `verify_posix_test.go` | darwin, linux, freebsd, openbsd, netbsd | `Config.VerifySettings`: the comparison of termios as set and as read back, the RS-485 read-back against a replaced ioctl that changes or drops a delay, and `Open` over a PTY, where a Linux PTY does not take a parity or other data bits |
+| `serial_windows_test.go` | windows | Baud rate check, the conversion of a time-out to `COMMTIMEOUTS`, the size of the DCB, and `Write` on a replaced `WriteFile`: a short count, a count out of range, a buffer written in several calls, an error. `Close` during a `Read` or `Write` on a replaced `ReadFile`, `WriteFile` and `CancelIoEx`, and I/O after `Close`. The address check of `Open` against a replaced `CreateFile`. No test opens a port |
+| `io_gate_test.go` | none | The count of active calls and the cancel loop of the Windows `Close`, on every platform, with `testing/synctest` |
+| `device_name_test.go` | none | The Windows address check, on every platform: the device names it takes and the forms it refuses; `FuzzWindowsDeviceName` |
 | `TestWriteChunks` | none | The loop of the Windows `Write`, on every platform: the split at the per-call limit, a short count with and without a time-out, an error on any call |
 | `TestOpenBSDSystemCallsByNumber` | none | Reads the source files built for OpenBSD: they make no system call by number other than ioctl, which is all `syscall.Syscall` carries out there. No test runs on OpenBSD |
 
@@ -66,14 +69,14 @@ The `cross-build` job builds and vets (`go vet ./...`, which compiles the tests)
 
 ## Lifecycle contract tests
 
-The rows are those of the contract test matrix in otfabric/engineering `standards/lifecycle.md`. The library has one long-lived type, `Port`. The tests below run on Linux and macOS; no test opens a port on Windows, where `Close` during I/O is not supported ([LIMITATIONS.md](LIMITATIONS.md#platform-differences)).
+The rows are those of the contract test matrix in otfabric/engineering `standards/lifecycle.md`. The library has one long-lived type, `Port`. The POSIX tests below run on Linux and macOS over a PTY. The Windows tests run on `windows-latest` against replaced `ReadFile`, `WriteFile`, `CancelIoEx` and `CreateFile`; no test opens a port there.
 
 | Row | Scenario | Applies | Tests and what they assert |
 |---|---|---|---|
-| L1 | Close twice | MUST | `TestCloseIdempotent`, `TestIOAfterCloseReturnsErrClosed`: the second `Close` returns nil |
-| L2 | Two goroutines call Close | MUST | `TestConcurrentClose`: four goroutines, all return nil. `TestCloseUnblocksRead`, `TestCloseUnblocksWrite`: a second `Close` while the first waits for I/O returns nil and leaves the descriptor open |
-| L3 | Close during a blocked read | MUST on POSIX | `TestCloseUnblocksRead`: the `Read` returns `ErrClosed`; until it has unregistered, `Close` has not returned and the descriptor is open; afterwards `Close` returns nil and the port holds no descriptor |
-| L4 | Close during a write | MUST on POSIX | `TestCloseUnblocksWrite`: the same for a `Write` that waits for room, which returns a partial count with `ErrClosed` |
+| L1 | Close twice | MUST | `TestCloseIdempotent`, `TestIOAfterCloseReturnsErrClosed`: the second `Close` returns nil. Windows: `TestCloseCancelsIO` |
+| L2 | Two goroutines call Close | MUST | `TestConcurrentClose`: four goroutines, all return nil. `TestCloseUnblocksRead`, `TestCloseUnblocksWrite`: a second `Close` while the first waits for I/O returns nil and leaves the descriptor open. Windows: `TestIOGateShutCancelsAndWaits`, on the gate of the port: a second shut while the first waits returns at once |
+| L3 | Close during a blocked read | MUST | `TestCloseUnblocksRead`: the `Read` returns `ErrClosed`; until it has unregistered, `Close` has not returned and the descriptor is open; afterwards `Close` returns nil and the port holds no descriptor. Windows: `TestCloseCancelsIO/Read`, `TestCloseCancelsAgain`: `Close` cancels the `ReadFile`, again every 10 ms while it has not returned, and returns after the `Read`, which returns `ErrClosed` |
+| L4 | Close during a write | MUST | `TestCloseUnblocksWrite`: the same for a `Write` that waits for room, which returns a partial count with `ErrClosed`. Windows: `TestCloseCancelsIO/Write`, and `TestCloseBetweenWritePieces` for a `Close` between two `WriteFile` calls |
 | L5 | Close during handshake | n/a | No handshake |
 | L6 | Cancel a pending request | n/a | No request and response, and no context API |
 | L7 | Response after a time-out | n/a | No correlation of requests and responses |
@@ -81,13 +84,13 @@ The rows are those of the contract test matrix in otfabric/engineering `standard
 | L9, L10, L11 | Callbacks | n/a | No callbacks |
 | L12 | Queue at capacity | n/a | No queue. The wake pipe takes one byte, written once by `Close` |
 | L13 | Concurrent sessions | n/a | No sessions. One reader and one writer on a port: `TestChaosFullDuplexFragmentingRelay` |
-| L14 | Failure during construction | MUST | `TestOpenNonexistentDevice`, `TestOpenNotACharacterDevice`, `TestOpenNotATerminal`, `TestOpenRS485Unsupported`: the port is reset and the descriptor closed. `TestChaosOpenCloseChurn`, `TestCloseDoesNotLeakDescriptors`: the count of open descriptors. Not tested: a failure to create the wake pipe |
+| L14 | Failure during construction | MUST | `TestOpenNonexistentDevice`, `TestOpenNotACharacterDevice`, `TestOpenNotATerminal`, `TestOpenRS485Unsupported`, `TestOpenVerifySettingsResetsPort`: the port is reset and the descriptor closed. Windows: `TestOpenAddress`, an address that is not a device name fails before `CreateFile`. `TestChaosOpenCloseChurn`, `TestCloseDoesNotLeakDescriptors`: the count of open descriptors. Not tested: a failure to create the wake pipe |
 | L15 | `Shutdown(ctx)` | n/a | No graceful shutdown |
 | L16 | Close racing reconnect | n/a | No reconnect |
 
-I/O after `Close`: `TestIOAfterCloseReturnsErrClosed`.
+I/O after `Close`: `TestIOAfterCloseReturnsErrClosed`; Windows: `TestCloseCancelsIO`.
 
-Rows that apply and have no test: L1, L2 and L14 on Windows, where no test opens a port, and L14 for a failure to create the wake pipe.
+Rows that apply and have no test: L2 on a Windows port (it is tested on its gate), L14 on Windows for a failure after `CreateFile`, where no test opens a port, and L14 for a failure to create the wake pipe.
 
 `TestCloseUnblocksRead` and `TestCloseUnblocksWrite` do not sleep. The POSIX `port` calls an unexported hook, nil outside tests, before each wait for the descriptor and before a call unregisters. The test starts `Close` when the call has reached its wait, holds the call in the hook once `Close` has woken it, and then takes the port's mutex: `Close` gives the mutex up only while it waits for the call, or when it returns, so the state the test reads is one of those two. With the wait removed from `Close` both tests fail.
 
@@ -105,7 +108,7 @@ Coverage is measured on the host. A Linux run does not count Windows, macOS or B
 
 ## Fuzzing
 
-Targets are in `chaos_fuzz_test.go` and `chaos_fuzz_posix_test.go`, and `make fuzz` discovers them. CI runs each for 10 seconds.
+Targets are in `chaos_fuzz_test.go`, `chaos_fuzz_posix_test.go` and `device_name_test.go`, and `make fuzz` discovers them. CI runs each for 10 seconds.
 
 When a fuzz run fails:
 

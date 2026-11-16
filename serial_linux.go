@@ -48,6 +48,24 @@ var charSizes = map[int]uint32{
 	8: syscall.CS8,
 }
 
+// speedBits are the bits of Termios.Cflag that hold the output speed: the
+// union of the speed codes, because the syscall package does not name
+// CBAUD. On most architectures that union is CBAUD, 0x100f. On PowerPC,
+// where CBAUD is 0xff, it is 0x1f, which holds every speed code there,
+// BOTHER included.
+var speedBits = func() (bits uint32) {
+	for _, code := range baudRates {
+		bits |= code
+	}
+	return bits
+}()
+
+// termiosSpeed returns the output speed code of t, which Linux keeps in
+// Cflag.
+func termiosSpeed(t *syscall.Termios) uint32 {
+	return t.Cflag & speedBits
+}
+
 func init() {
 	isBaudRateSupported = func(b BaudRate) bool {
 		_, ok := baudRates[int(b)]

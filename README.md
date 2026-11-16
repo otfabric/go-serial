@@ -65,7 +65,7 @@ func main() {
 }
 ```
 
-On Windows, use a COM port name such as `COM3` as the address. See [Usage](#usage) for timeouts, typed configuration, RS-485 and error handling.
+On Windows, use a device name such as `COM3` as the address. See [Usage](#usage) for timeouts, typed configuration, RS-485 and error handling.
 
 ---
 
@@ -237,11 +237,10 @@ cfg.Parity = serial.ParityNone
   arrives (or the underlying fd/handle is closed by the OS).
 - **Close** — Restores prior termios (POSIX) or DCB/timeouts (Windows) when
   possible, then closes the fd/handle. `Close` may be called more than once
-  and from several goroutines. On **POSIX** it also cancels I/O: a `Read` or
-  `Write` blocked in another goroutine returns `ErrClosed`, `Close` waits until
-  it has let go of the descriptor, and later calls return `ErrClosed`. On
-  **Windows** `Close` is not a cancel; do not call it while I/O is in flight,
-  and prefer a finite `Timeout`.
+  and from several goroutines. It also cancels I/O: a `Read` or `Write` in
+  progress in another goroutine returns `ErrClosed`, `Close` waits until it
+  has returned, and later calls return `ErrClosed`. On **Windows** the
+  cancel is `CancelIoEx` on the port's handle.
 - **Hangup** — On POSIX systems, `Read` returns `io.EOF` (or the OS error, such
   as `EIO`) with `n == 0` once the device goes away, e.g. an unplugged USB
   adapter; it never returns a negative count.
@@ -250,7 +249,7 @@ Package godoc (`serial.go`) restates the same contract.
 
 ### Timeout and error handling
 
-Set `Config.Timeout` to bound blocking I/O. It applies to `Read` on every platform and to `Write` on Windows only. When a read times out, the port returns `serial.ErrTimeout`; a Windows write that times out returns it with the number of bytes written. Use `errors.Is` to detect it:
+Set `Config.Timeout` to bound blocking I/O. It applies to `Read` on every platform and to `Write` on Windows only. When a read times out, the port returns `serial.ErrTimeout`; a Windows write that times out returns it with the number of bytes written. `ErrTimeout` also matches `os.ErrDeadlineExceeded` and has a `Timeout()` method, like the time-outs of `net` and `os`. Use `errors.Is` to detect it:
 
 ```go
 package main
@@ -322,6 +321,10 @@ Use `serial.IsUnsupportedBaudRate(err)` to detect when the baud rate is not supp
 
 Before opening, `Open` normalizes config: `BaudRate(0)`→9600, `DataBits(0)`→8, `StopBits(0)`→1, `Parity("")`→none. So you can set only `Address` and get 9600 8N1.
 
+### Checking that the port took the settings
+
+A driver can accept a setting without applying it. With `Config.VerifySettings`, `Open` on POSIX systems reads the settings back and fails with a `*serial.ConfigError` wrapping `serial.ErrInvalidConfig` that names the field the port did not take: the speed, data bits, stop bits, parity and, with RS-485 on Linux, the two delays. A Linux pseudo-terminal sets 8 data bits and no parity whatever it is given, so do not set the option there for other settings. It has no effect on Windows.
+
 ### RS-485
 
 RS-485 options live on `Config.RS485`. Set `RS485.Enabled` to true and configure delays and RTS behavior as needed. Support is platform-dependent (e.g. Linux with RS485-capable drivers). The transport API is unchanged; RS-485 is not Modbus-specific.
@@ -334,7 +337,7 @@ The library has a backend for each platform below. They are not at the same leve
 |---|---|---|
 | Linux | Tested over pseudo-terminals | Every pull request that changes code runs all tests against the kernel's tty layer, with the race detector, on Go 1.26 and 1.27. Nightly: the chaos tests with more rounds, the fuzz targets, and all tests as a 32-bit (386) binary. Built and vetted for amd64, arm (v7) and arm64 |
 | macOS | Tested over pseudo-terminals | The same pull requests run all tests with the race detector; nightly, the chaos tests. Built and vetted for amd64 and arm64 |
-| Windows | Built; tested without a port | Built and vetted for amd64 and arm64. A `windows-latest` job runs the tests that need no port: the time-out and DCB conversions, and `Write` on a replaced `WriteFile`. No test opens a port, so `Open`, `Read` and `Close` on a device are not exercised |
+| Windows | Built; tested without a port | Built and vetted for amd64 and arm64. A `windows-latest` job runs the tests that need no port: the time-out and DCB conversions, the address check, `Write` on a replaced `WriteFile`, and `Close` cancelling `Read` and `Write` on replaced system calls. No test opens a port, so `Open`, `Read` and `Close` on a device are not exercised |
 | FreeBSD | Built, not run | Built and vetted for amd64 and arm64. No job runs its tests |
 | NetBSD | Built, not run | Built and vetted for amd64. No job runs its tests |
 | OpenBSD | Built, not run | Built and vetted for amd64. Nothing has been run on OpenBSD. It waits for I/O with the `select` code that the macOS tests run |
@@ -344,13 +347,12 @@ No test on any platform uses a physical UART, a USB adapter or an RS-485 transce
 Known not to work:
 
 - **RS-485 outside Linux.** With `Config.RS485.Enabled`, `Open` fails with `ErrUnsupportedPlatform` on macOS and the BSDs, and the Windows backend ignores the setting.
-- **`Close` during I/O on Windows.** It does not cancel a `Read` or `Write`; see [Ownership, concurrency, and Close](#ownership-concurrency-and-close).
 - **Descriptors at or above 1024 on macOS and OpenBSD.** `Read`, and a `Write` that has to wait, fail with `EINVAL`, because `select` cannot watch them.
 - **OpenBSD with a release before v0.4.1 built with Go 1.26 or later.** `Read` fails there with "function not implemented". Use v0.4.1 or later.
 
 [LIMITATIONS.md](LIMITATIONS.md) has the differences between the platforms and the list of what is not verified.
 
-On Windows, any positive baud rate is passed to the driver; acceptance is driver-dependent. On POSIX, supported baud rates are platform-specific (see your OS termios). The address is a device path on POSIX systems and must be a character device. On Windows it is passed to `CreateFile` as given: `COM1` to `COM9` work as they are, and Win32 needs the form `\\.\COM10` for higher port numbers.
+On Windows, any positive baud rate is passed to the driver; acceptance is driver-dependent. On POSIX, supported baud rates are platform-specific (see your OS termios). The address is a device path on POSIX systems and must be a character device. On Windows it is a device name, such as `COM3`, `COM3:` or `\\.\COM10`, which `Open` opens in the device namespace, so `COM10` and higher work as they are. Any other form fails with `serial.ErrInvalidConfig` before anything is opened; `Config.UncheckedAddress` passes the address to `CreateFile` as given, as before v0.5.0.
 
 ## Automated tests
 

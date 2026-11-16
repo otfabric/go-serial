@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"runtime"
+	"strconv"
 	"sync"
 	"syscall"
 	"time"
@@ -143,7 +144,13 @@ func (p *port) open(c *Config) (err error) {
 		p.oldTermios = nil
 		return err
 	}
-	if err = enableRS485(p.fd, &c.RS485); err != nil {
+	if c.VerifySettings {
+		if err = p.checkTermios(c, termios); err != nil {
+			p.close()
+			return err
+		}
+	}
+	if err = enableRS485(p.fd, &c.RS485, c.VerifySettings); err != nil {
 		p.close()
 		return err
 	}
@@ -190,7 +197,13 @@ func (p *port) Close() (err error) {
 		p.idle.Wait()
 	}
 	restoreErr := p.restoreTermios()
+	if restoreErr != nil {
+		restoreErr = fmt.Errorf("serial: close: restore termios: %w", restoreErr)
+	}
 	closeErr := syscall.Close(p.fd)
+	if closeErr != nil {
+		closeErr = fmt.Errorf("serial: close: %w", closeErr)
+	}
 	p.fd = -1
 	p.oldTermios = nil
 	if p.wake != nil {
@@ -417,14 +430,38 @@ func newTermios(c *Config) (termios *syscall.Termios, err error) {
 	return
 }
 
-// enableRS485 enables RS485 functionality of driver via an ioctl if the config says so.
-func enableRS485(fd int, config *RS485Config) error {
+// enableRS485 enables RS485 functionality of driver via an ioctl if the
+// config says so. With verify set it reads the settings back and fails when
+// the driver applied other delays.
+func enableRS485(fd int, config *RS485Config, verify bool) error {
 	if !config.Enabled {
 		return nil
 	}
 	if rs485Tiocs == 0 {
 		return fmt.Errorf("serial: RS485 is supported on Linux only: %w", ErrUnsupportedPlatform)
 	}
+	return applyRS485(fd, config, verify)
+}
+
+// rs485Ioctl sends the RS-485 ioctl req with opts; tests replace it.
+var rs485Ioctl = func(fd int, req uint, opts *rs485IoctlOpts) error {
+	r, _, errno := syscall.Syscall(
+		syscall.SYS_IOCTL,
+		uintptr(fd),
+		uintptr(req),
+		uintptr(unsafe.Pointer(opts)))
+	if errno != 0 {
+		return os.NewSyscallError("SYS_IOCTL (RS485)", errno)
+	}
+	if r != 0 {
+		return fmt.Errorf("RS485 ioctl returned %d", r)
+	}
+	return nil
+}
+
+// applyRS485 sets the RS-485 options of config with TIOCSRS485 and, with
+// verify set, reads them back with TIOCGRS485 and compares the delays.
+func applyRS485(fd int, config *RS485Config, verify bool) error {
 	if config.DelayRtsBeforeSend < 0 || config.DelayRtsBeforeSend > MaxRS485Delay ||
 		config.DelayRtsAfterSend < 0 || config.DelayRtsAfterSend > MaxRS485Delay {
 		return fmt.Errorf("serial: RS485 delay out of range: %w", ErrInvalidConfig)
@@ -446,16 +483,103 @@ func enableRS485(fd int, config *RS485Config) error {
 		rs485.flags |= rs485RXDuringTX
 	}
 
-	r, _, errno := syscall.Syscall(
-		syscall.SYS_IOCTL,
-		uintptr(fd),
-		uintptr(rs485Tiocs),
-		uintptr(unsafe.Pointer(&rs485)))
-	if errno != 0 {
-		return os.NewSyscallError("SYS_IOCTL (RS485)", errno)
+	want := rs485
+	if err := rs485Ioctl(fd, rs485Tiocs, &rs485); err != nil {
+		return fmt.Errorf("serial: enable RS485: %w", err)
 	}
-	if r != 0 {
-		return errors.New("serial: RS485 ioctl failed")
+	if !verify {
+		return nil
+	}
+	var got rs485IoctlOpts
+	if err := rs485Ioctl(fd, rs485Tiocg, &got); err != nil {
+		return fmt.Errorf("serial: read RS485 settings: %w", err)
+	}
+	return checkRS485(config, &want, &got)
+}
+
+// checkRS485 compares the delays of want, the options Open set, with got,
+// the options the driver reports. The flags are not compared: a driver
+// changes them by rules of its own (when both RTS levels are equal, for
+// one).
+func checkRS485(config *RS485Config, want, got *rs485IoctlOpts) error {
+	if got.delay_rts_before_send != want.delay_rts_before_send {
+		return notApplied("RS485.DelayRtsBeforeSend", config.DelayRtsBeforeSend, fmt.Sprintf("%d ms", got.delay_rts_before_send))
+	}
+	if got.delay_rts_after_send != want.delay_rts_after_send {
+		return notApplied("RS485.DelayRtsAfterSend", config.DelayRtsAfterSend, fmt.Sprintf("%d ms", got.delay_rts_after_send))
 	}
 	return nil
+}
+
+// notApplied is the error of Config.VerifySettings for a setting the port
+// did not take.
+func notApplied(field string, value any, reported string) error {
+	return &ConfigError{Field: field, Value: value, Reason: "not applied: the port reports " + reported, Err: ErrInvalidConfig}
+}
+
+// checkTermios reads the terminal settings back from the port and compares
+// them with want, the settings open set.
+func (p *port) checkTermios(c *Config, want *syscall.Termios) error {
+	got := &syscall.Termios{}
+	if err := tcgetattr(p.fd, got); err != nil {
+		return fmt.Errorf("serial: read termios: %w", err)
+	}
+	return compareTermios(c, want, got)
+}
+
+// compareTermios returns an error naming the first setting of c in which
+// got, the settings the port reports, differs from want, the settings open
+// set: the output speed, the character size, the stop bits or the parity.
+// Other flags are not compared. Parity is compared as none, even or odd, so
+// a PARODD bit without PARENB counts as no parity.
+func compareTermios(c *Config, want, got *syscall.Termios) error {
+	if s := termiosSpeed(got); s != termiosSpeed(want) {
+		return notApplied("BaudRate", c.BaudRate, speedName(s))
+	}
+	if size := got.Cflag & syscall.CSIZE; size != want.Cflag&syscall.CSIZE {
+		return notApplied("DataBits", c.DataBits, sizeName(size)+" data bits")
+	}
+	if stop := got.Cflag & syscall.CSTOPB; stop != want.Cflag&syscall.CSTOPB {
+		reported := "1 stop bit"
+		if stop != 0 {
+			reported = "2 stop bits"
+		}
+		return notApplied("StopBits", c.StopBits, reported)
+	}
+	if parity := termiosParity(got); parity != termiosParity(want) {
+		return notApplied("Parity", c.Parity, "parity "+parity.String())
+	}
+	return nil
+}
+
+// speedName returns the rate of a speed code of this platform, or the code.
+func speedName(code termiosFlag) string {
+	for rate, c := range baudRates {
+		if c == code {
+			return strconv.Itoa(rate) + " baud"
+		}
+	}
+	return fmt.Sprintf("speed code %#x", code)
+}
+
+// sizeName returns the number of data bits of a CSIZE value.
+func sizeName(size termiosFlag) string {
+	for bits, s := range charSizes {
+		if s == size {
+			return strconv.Itoa(bits)
+		}
+	}
+	return fmt.Sprintf("CSIZE %#x", size)
+}
+
+// termiosParity returns the parity that the flags of t select.
+func termiosParity(t *syscall.Termios) Parity {
+	switch {
+	case t.Cflag&syscall.PARENB == 0:
+		return ParityNone
+	case t.Cflag&syscall.PARODD != 0:
+		return ParityOdd
+	default:
+		return ParityEven
+	}
 }

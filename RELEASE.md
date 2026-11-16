@@ -1,5 +1,42 @@
 # go-serial Releases
 
+## v0.5.0
+
+**Date:** 2026-11-16
+**Previous release:** v0.4.1
+
+## Summary
+
+On Windows `Close` cancels a `Read` or `Write` in progress and `Open` takes a device name only. `ErrTimeout` matches `os.ErrDeadlineExceeded`, the errors of `Close` and of the RS-485 ioctl name the operation, and the new `Config.VerifySettings` makes `Open` on POSIX systems check that the port took the settings. The API change is additive: two `Config` fields.
+
+## Changes
+
+### Breaking
+
+- `ErrTimeout` matches `os.ErrDeadlineExceeded` with `errors.Is` and has a `Timeout()` method that reports true, like the time-outs of `net` and `os`. It is the same variable and does not match `context.DeadlineExceeded`; `errors.Is(err, serial.ErrTimeout)` is unchanged. Who notices: code that tests for `os.ErrDeadlineExceeded` or a `Timeout()` method and handles a match differently from `serial.ErrTimeout`. Restore path: test `serial.ErrTimeout` first.
+- The errors of `Close` and of the RS-485 ioctl name the operation: `serial: close: …` (with `restore termios`, `restore comm timeouts` or `restore comm state` for a failed restore) and `serial: enable RS485: …`. `errors.Is` still reaches the cause. Who notices: code that compares the text of these errors. Restore path: match the cause, for example a `syscall.Errno`, with `errors.Is`.
+- Windows: `Open` takes a device name only: `COM3`, `COM3:`, `\\.\COM10`, a `\\?\` device interface name, `\\.\Global\NAME` or `\\.\GLOBALROOT\Device\NAME`. It opens the name in the device namespace, so `COM10` and higher work without the prefix. Any other form fails with a `*ConfigError` for `Address` wrapping `ErrInvalidConfig` before anything is opened. Who notices: a program that opens a port through another form, such as a device interface path with a reference string or a link name with a path. Restore path: `Config.UncheckedAddress` passes the address to `CreateFile` as given, as before; or use the port's `COM` name.
+- Windows: `Close` cancels a `Read` or `Write` in progress with `CancelIoEx`, again every 10 ms until the call has returned, and only then restores the settings and closes the handle. The call returns `ErrClosed`, and so do `Read` and `Write` after `Close`. Before, `Close` during I/O was not supported, and I/O after `Close` failed with an error of the closed handle. Who notices: code that matched that error, or that relied on a `Close` returning while a call was still in the driver. Restore path: none that keeps a closed handle in use; match `errors.Is(err, serial.ErrClosed)`, which the POSIX backend returns since v0.4.0.
+
+### Added
+
+- `Config.VerifySettings`: on POSIX systems `Open` reads termios back after setting it and fails with a `*ConfigError` wrapping `ErrInvalidConfig` when the port did not take the speed, data bits, stop bits or parity. On Linux with `RS485.Enabled` it also reads the RS-485 settings back (`TIOCGRS485`) and fails when the driver changed a delay. The error names the field and what the port reports; `Open` restores the settings it found and closes the descriptor first. Off by default, so `Open` behaves as before: a Linux pseudo-terminal, for example, sets 8 data bits and no parity whatever it is given. No effect on Windows.
+- `Config.UncheckedAddress`: on Windows `Open` passes `Address` to `CreateFile` as given, as before v0.5.0. No effect on POSIX systems.
+
+### Documentation
+
+- The package documentation, README, API.md, ERRORS.md, LIMITATIONS.md, SECURITY.md and ARCHITECTURE.md: `Close` on Windows, the Windows address rule, `Config.VerifySettings`, `ErrTimeout` and `os.ErrDeadlineExceeded`, and the operation in error texts.
+- SECURITY.md: 0.5.x is the supported line from its release; 0.4.x until then.
+- TESTING.md: the new tests, and Windows tests for rows L1, L3, L4 and L14 of the lifecycle table.
+
+### Tests and CI
+
+- Windows, run by the `windows-latest` job against replaced `ReadFile`, `WriteFile`, `CancelIoEx` and `CreateFile`: `Close` during a `Read` and a `Write`, a call that the first cancel missed, `Close` between two `WriteFile` calls, I/O after `Close`, and the address check before `CreateFile`.
+- Every platform: the gate of the Windows `Close` with `testing/synctest`, the Windows address check as a table test and as `FuzzWindowsDeviceName`, and `ErrTimeout` against `os.ErrDeadlineExceeded`, `context.DeadlineExceeded` and the other sentinels.
+- POSIX: the comparison of termios as set and as read back, the RS-485 read-back against a replaced ioctl, `Open` with `Config.VerifySettings` over a PTY, and the operation prefix of the `Close` and RS-485 errors.
+
+---
+
 ## v0.4.1
 
 **Date:** 2026-11-15

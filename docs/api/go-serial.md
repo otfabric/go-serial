@@ -20,7 +20,9 @@ One Read and one Write may run concurrently on the same Port (full-duplex). Do n
 
 Config.Timeout applies to Read on all platforms; Write timeout is honored on Windows when Timeout > 0, where a Write that runs out of time returns the number of bytes written and ErrTimeout. It is not applied on POSIX, where Write blocks while the driver's output buffer is full and returns once all bytes are written or an error occurs. On every platform Write returns n \< len(b) only with an error. Timeout == 0 means Read may block indefinitely until data arrives (or the fd/handle is closed by the OS).
 
-Close restores prior termios/DCB settings when possible, then closes the fd/handle. Close may be called more than once and from several goroutines. On POSIX systems Close also cancels I/O: a Read or Write blocked in another goroutine returns ErrClosed, Close waits for it to let go of the descriptor, and Read and Write after Close return ErrClosed. On Windows Close is not a cancel and must not run concurrently with Read or Write; prefer a finite Timeout there.
+Close restores prior termios/DCB settings when possible, then closes the fd/handle. Close may be called more than once and from several goroutines. Close also cancels I/O: a Read or Write in progress in another goroutine returns ErrClosed, Close waits until it has returned before it closes the descriptor or handle, and Read and Write after Close return ErrClosed. On Windows the cancel is CancelIoEx on the port's handle.
+
+On Windows Config.Address must be a device name such as COM3 or \\\\.\\COM10; see Config.Address and Config.UncheckedAddress. Config.VerifySettings makes Open on POSIX systems check that the port took the settings.
 
 On POSIX systems Read follows the io.Reader contract when the line goes away: it returns n == 0 with io.EOF once the other end hung up (an unplugged USB adapter, a closed pseudo-terminal) or with the OS error (for example EIO), never a negative count.
 
@@ -48,7 +50,12 @@ var (
 	// were. The POSIX Write has no deadline and does not return it. Zero
 	// timeout means no deadline (block until I/O completes). Use
 	// errors.Is(err, serial.ErrTimeout) to detect.
-	ErrTimeout = errors.New("serial: timeout")
+	//
+	// Config.Timeout is an I/O deadline, so ErrTimeout also matches
+	// os.ErrDeadlineExceeded, the error of an expired deadline on an
+	// os.File or a net.Conn, and has a method Timeout that reports true. It
+	// does not match context.DeadlineExceeded: no context is involved.
+	ErrTimeout error = timeoutError{}
 
 	// ErrInvalidConfig is returned when config validation fails (e.g. empty address,
 	// unsupported parity). Use errors.Is(err, serial.ErrInvalidConfig) to detect.
@@ -59,9 +66,9 @@ var (
 	// (no platform init ran). Use errors.Is(err, serial.ErrUnsupportedPlatform) to detect.
 	ErrUnsupportedPlatform = errors.New("serial: unsupported platform")
 
-	// ErrClosed is returned by Read and Write on POSIX systems when the
-	// port was closed before or during the call. Use
-	// errors.Is(err, serial.ErrClosed) to detect.
+	// ErrClosed is returned by Read and Write when the port was closed
+	// before or during the call. Use errors.Is(err, serial.ErrClosed) to
+	// detect.
 	ErrClosed = errors.New("serial: port closed")
 )
 ```
@@ -168,8 +175,15 @@ UnmarshalText implements encoding.TextUnmarshaler. Accepts a decimal baud rate (
 ```go
 type Config struct {
 	// Device path (e.g. /dev/ttyUSB0 on Unix, COM1 on Windows). On POSIX
-	// systems Open fails unless the path is a character device. On Windows
-	// the name is passed to CreateFile as given.
+	// systems Open fails unless the path is a character device.
+	//
+	// On Windows Address is a device name: NAME, NAME: (COM1, COM1:,
+	// COM10), \\.\NAME or \\?\NAME (\\.\COM10, a device interface name),
+	// \\.\Global\NAME or \\.\GLOBALROOT\Device\NAME, where NAME holds no
+	// backslash, slash or colon. Open opens it in the device namespace, as
+	// \\.\NAME, so port numbers above 9 need no prefix. Any other form fails
+	// with a *ConfigError wrapping ErrInvalidConfig before anything is
+	// opened, unless UncheckedAddress is set.
 	Address string
 	// Baud rate. Zero = 9600. Use constants or BaudRate(n) for custom rates.
 	BaudRate BaudRate
@@ -184,6 +198,24 @@ type Config struct {
 	Timeout time.Duration
 	// RS-485 options. Ignored unless Enabled is true.
 	RS485 RS485Config
+	// VerifySettings makes Open read the settings back from the driver
+	// after setting them, and fail when the port did not take them: a
+	// *ConfigError wrapping ErrInvalidConfig names the field and what the
+	// port reports, and the port is closed. Compared are the speed, the
+	// data bits, the stop bits and the parity and, with RS485.Enabled, the
+	// two RS-485 delays. POSIX systems only; on Windows SetCommState
+	// reports a setting the driver refuses as an error, and the field has
+	// no effect. A pseudo-terminal on Linux takes 8 data bits without
+	// parity whatever is asked: with VerifySettings, other data bits or a
+	// parity fail there.
+	VerifySettings bool
+	// UncheckedAddress makes the Windows backend pass Address to
+	// CreateFile as given, as releases before v0.5.0 did, instead of
+	// accepting a device name only. CreateFile then opens whatever object
+	// the name refers to before the backend can tell whether it is a serial
+	// port: set it only for an address from a trusted source. It has no
+	// effect on POSIX systems.
+	UncheckedAddress bool
 }
 ```
 

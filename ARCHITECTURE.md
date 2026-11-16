@@ -36,6 +36,8 @@ example (demo)      modbus (presets)      callers such as go-modbus
 | `wait_select.go` | darwin, openbsd | `waitFDOnce` with `select(2)`: macOS `poll(2)` does not support ttys, and on OpenBSD the `syscall` package has `Select` but no poll, and carries out `syscall.Syscall` for ioctl only |
 | `serial_windows.go` | windows | `port` on a `syscall.Handle` |
 | `write_chunks.go` | none | The loop of the Windows `Write`. It has no build constraint so that its tests run on every platform; the POSIX backend does not call it |
+| `io_gate.go` | none | `ioGate`, the count of active calls of the Windows `port` and the cancel loop of its `Close`. No build constraint, for the same reason |
+| `device_name.go` | none | `windowsDeviceName`, the address check of the Windows `Open`. No build constraint, for the same reason |
 | `zsyscall_windows.go`, `ztypes_windows.go` | windows | Generated from `syscall_windows.go` and `types_windows.go` by [generate.bat](generate.bat); `zsyscall_windows.go` also carries a hand edit noted in its header |
 
 On an operating system without a backend, `openPort` stays nil and `Open` returns `ErrUnsupportedPlatform`.
@@ -52,7 +54,11 @@ The descriptor is opened with `O_NOCTTY|O_NDELAY|O_CLOEXEC`, so it does not bloc
 
 `Read` and `Write` are synchronous `ReadFile` and `WriteFile` calls. `Config.Timeout` becomes `COMMTIMEOUTS` values. A `ReadFile` that returns zero bytes reports `ErrTimeout`; with no time-out set, `Read` calls `ReadFile` again after its longest wait (about 49.7 days).
 
-`Write` runs the loop in `write_chunks.go`: one `WriteFile` call for each piece of at most 2^32-1 bytes. A call that writes fewer bytes than it was given ends the loop with the count and an error, `ErrTimeout` when `Config.Timeout` is set. `Close` does not cancel either call.
+`Write` runs the loop in `write_chunks.go`: one `WriteFile` call for each piece of at most 2^32-1 bytes. A call that writes fewer bytes than it was given ends the loop with the count and an error, `ErrTimeout` when `Config.Timeout` is set.
+
+`Close` cancels both calls with `CancelIoEx(handle, nil)`, which ends the synchronous I/O that other threads have pending on the handle; the call then returns `ErrClosed`. A call can register just after a cancel and only then enter `ReadFile` or `WriteFile`, and a `Write` can wait for a `Read` on the synchronous handle and start once that `Read` was cancelled, so `Close` cancels again every 10 ms until no call is active.
+
+`Open` passes the address to `CreateFile` only when it is a device name, which it opens under `\\.\`; `windowsDeviceName` defines the forms. `Config.UncheckedAddress` skips the check.
 
 ## Goroutines and ownership
 
@@ -61,12 +67,12 @@ Production code starts no goroutines. A blocking `Read` or `Write` runs on the c
 Each port has one mutex, and nothing is called while it is held except the system calls of `Close`:
 
 - POSIX: the mutex guards `closed`, the count of active calls and the wake pipe. `Read` and `Write` register under it (`begin`), use the descriptor without it, and unregister (`end`). `Close` sets `closed`, writes to the wake pipe, waits on a condition variable until no call is active, and only then restores termios and closes the descriptor and the pipe. So a descriptor number is never used after it was closed. A second `Close` returns nil at once, also while the first one waits.
-- Windows: the mutex makes `Close` safe to call more than once and from several goroutines. `Read` and `Write` do not take it and use the handle directly, which is why `Close` must not run during them.
+- Windows: the mutex of `ioGate` guards `closed` and the count of active calls. `Read` and `Write` register under it (`begin`), use the handle without it, and unregister (`end`). `Close` sets `closed`, cancels until no call is active, and only then restores the DCB and timeouts and closes the handle. A second `Close` returns nil at once, also while the first one waits.
 
-`Open` works on a normalized copy of `Config`, so the caller may change its `Config` afterwards. The caller owns the `Port`. The contract for concurrent use is in the [package documentation](serial.go): one `Read` and one `Write` at a time. On POSIX systems `Close` may run during either and cancels it; on Windows it must not.
+`Open` works on a normalized copy of `Config`, so the caller may change its `Config` afterwards. The caller owns the `Port`. The contract for concurrent use is in the [package documentation](serial.go): one `Read` and one `Write` at a time. `Close` may run during either and cancels it.
 
 The POSIX `port` has an unexported `hook` field for tests, nil otherwise: `Read` and `Write` call it before each wait and before they unregister, so a test can hold a call at that point without sleeping ([TESTING.md](TESTING.md#lifecycle-contract-tests)).
 
 ## State saved and restored
 
-`open` saves the current termios (POSIX) or DCB and timeouts (Windows), and `Close` restores them before closing. On POSIX, failure to read the current termios is tolerated and nothing is restored. If setup fails part-way, `open` closes the descriptor or handle before returning the error.
+`open` saves the current termios (POSIX) or DCB and timeouts (Windows), and `Close` restores them before closing. On POSIX, failure to read the current termios is tolerated and nothing is restored. With `Config.VerifySettings`, POSIX `open` reads termios back after setting it and compares the speed, character size, stop bits and parity, and on Linux reads the RS-485 settings back with `TIOCGRS485` after `TIOCSRS485` and compares the two delays; a difference fails `open` with a `*ConfigError`, after it restored the saved termios and closed the descriptor. If setup fails part-way, `open` closes the descriptor or handle before returning the error.

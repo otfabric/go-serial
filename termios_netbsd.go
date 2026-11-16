@@ -15,3 +15,8 @@ func cfSetIspeed(termios *syscall.Termios, speed uint32) {
 func cfSetOspeed(termios *syscall.Termios, speed uint32) {
 	termios.Ospeed = int32(speed)
 }
+
+// termiosSpeed returns the output speed of termios.
+func termiosSpeed(termios *syscall.Termios) uint32 {
+	return uint32(termios.Ospeed)
+}
