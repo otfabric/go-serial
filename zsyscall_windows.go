@@ -17,6 +17,9 @@ var (
 	procSetCommState    = modkernel32.NewProc("SetCommState")
 	procGetCommTimeouts = modkernel32.NewProc("GetCommTimeouts")
 	procSetCommTimeouts = modkernel32.NewProc("SetCommTimeouts")
+
+	procEscapeCommFunction = modkernel32.NewProc("EscapeCommFunction")
+	procGetCommModemStatus = modkernel32.NewProc("GetCommModemStatus")
 )
 
 func GetCommState(handle syscall.Handle, dcb *c_DCB) (err error) {
@@ -57,6 +60,30 @@ func GetCommTimeouts(handle syscall.Handle, timeouts *c_COMMTIMEOUTS) (err error
 
 func SetCommTimeouts(handle syscall.Handle, timeouts *c_COMMTIMEOUTS) (err error) {
 	r1, _, e1 := syscall.SyscallN(procSetCommTimeouts.Addr(), uintptr(handle), uintptr(unsafe.Pointer(timeouts)))
+	if r1 == 0 {
+		if e1 != 0 {
+			err = error(e1)
+		} else {
+			err = syscall.EINVAL
+		}
+	}
+	return
+}
+
+func escapeCommFunction(handle syscall.Handle, fn uint32) (err error) {
+	r1, _, e1 := syscall.SyscallN(procEscapeCommFunction.Addr(), uintptr(handle), uintptr(fn))
+	if r1 == 0 {
+		if e1 != 0 {
+			err = error(e1)
+		} else {
+			err = syscall.EINVAL
+		}
+	}
+	return
+}
+
+func getCommModemStatus(handle syscall.Handle, status *uint32) (err error) {
+	r1, _, e1 := syscall.SyscallN(procGetCommModemStatus.Addr(), uintptr(handle), uintptr(unsafe.Pointer(status)))
 	if r1 == 0 {
 		if e1 != 0 {
 			err = error(e1)

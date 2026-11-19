@@ -5,6 +5,7 @@
 package serial
 
 import (
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"math"
@@ -29,6 +30,10 @@ type port struct {
 
 	oldDCB      c_DCB
 	oldTimeouts c_COMMTIMEOUTS
+
+	// lines holds the flow control and RS-485 settings that decide whether
+	// SetRTS and SetDTR may drive their line.
+	lines Config
 }
 
 // newPort allocates a new serial port (internal use).
@@ -231,6 +236,24 @@ func (p *port) setTimeouts(c *Config) error {
 }
 
 func (p *port) setSerialConfig(c *Config) error {
+	if err := GetCommState(p.handle, &p.oldDCB); err != nil {
+		return fmt.Errorf("serial: get comm state: %w", err)
+	}
+	dcb, err := newDCB(c, &p.oldDCB)
+	if err != nil {
+		return err
+	}
+	if err := SetCommState(p.handle, &dcb); err != nil {
+		_ = SetCommState(p.handle, &p.oldDCB)
+		return fmt.Errorf("serial: set comm state: %w", err)
+	}
+	p.lines = Config{FlowControl: c.FlowControl, RS485: RS485Config{Enabled: c.RS485.Enabled}}
+	return nil
+}
+
+// newDCB returns the DCB for c. With XON/XOFF flow control it takes the
+// thresholds from old, the driver's DCB, or defaults where old has none.
+func newDCB(c *Config, old *c_DCB) (c_DCB, error) {
 	dcb := c_DCB{DCBlength: uint32(unsafe.Sizeof(c_DCB{}))}
 	if c.BaudRate == 0 {
 		dcb.BaudRate = 9600
@@ -248,30 +271,71 @@ func (p *port) setSerialConfig(c *Config) error {
 	case StopBits2:
 		dcb.StopBits = c_TWOSTOPBITS
 	default:
-		return fmt.Errorf("serial: unsupported stop bits %d: %w", c.StopBits, ErrInvalidConfig)
+		return dcb, fmt.Errorf("serial: unsupported stop bits %d: %w", c.StopBits, ErrInvalidConfig)
 	}
 	switch c.Parity {
 	case "", ParityNone:
 		dcb.Parity = c_NOPARITY
 	case ParityEven:
 		dcb.Parity = c_EVENPARITY
-		dcb.Pad_cgo_0[0] |= 0x02 // fParity
 	case ParityOdd:
 		dcb.Parity = c_ODDPARITY
-		dcb.Pad_cgo_0[0] |= 0x02 // fParity
 	default:
-		return fmt.Errorf("serial: unsupported parity %q: %w", c.Parity, ErrInvalidConfig)
+		return dcb, fmt.Errorf("serial: unsupported parity %q: %w", c.Parity, ErrInvalidConfig)
 	}
-	dcb.Pad_cgo_0[0] |= 0x01 // fBinary
+	switch c.FlowControl {
+	case "", FlowNone, FlowRTSCTS, FlowDTRDSR:
+	case FlowXONXOFF:
+		dcb.XonChar, dcb.XoffChar = int8(XON), int8(XOFF)
+		dcb.XonLim, dcb.XoffLim = old.XonLim, old.XoffLim
+		if dcb.XonLim == 0 {
+			dcb.XonLim = dcbDefaultXonLimit
+		}
+		if dcb.XoffLim == 0 {
+			dcb.XoffLim = dcbDefaultXoffLim
+		}
+	default:
+		return dcb, fmt.Errorf("serial: unsupported flow control %q: %w", c.FlowControl, ErrInvalidConfig)
+	}
+	binary.LittleEndian.PutUint32(dcb.Pad_cgo_0[:], dcbFlags(c))
+	return dcb, nil
+}
 
-	if err := GetCommState(p.handle, &p.oldDCB); err != nil {
-		return fmt.Errorf("serial: get comm state: %w", err)
+// SetDTR asserts or clears Data Terminal Ready (EscapeCommFunction).
+func (p *port) SetDTR(on bool) error {
+	return p.setLine("DTR", false, on)
+}
+
+// SetRTS asserts or clears Request To Send (EscapeCommFunction).
+func (p *port) SetRTS(on bool) error {
+	return p.setLine("RTS", true, on)
+}
+
+func (p *port) setLine(name string, rts, on bool) error {
+	if err := p.gate.begin(); err != nil {
+		return err
 	}
-	if err := SetCommState(p.handle, &dcb); err != nil {
-		_ = SetCommState(p.handle, &p.oldDCB)
-		return fmt.Errorf("serial: set comm state: %w", err)
+	defer p.gate.end()
+	if err := lineInUse(&p.lines, rts); err != nil {
+		return err
+	}
+	if err := escapeCommFunction(p.handle, commEscape(rts, on)); err != nil {
+		return fmt.Errorf("serial: set %s: %w", name, err)
 	}
 	return nil
+}
+
+// ModemStatus reads CTS, DSR, RI and DCD (GetCommModemStatus).
+func (p *port) ModemStatus() (ModemStatus, error) {
+	if err := p.gate.begin(); err != nil {
+		return ModemStatus{}, err
+	}
+	defer p.gate.end()
+	var bits uint32
+	if err := getCommModemStatus(p.handle, &bits); err != nil {
+		return ModemStatus{}, fmt.Errorf("serial: modem status: %w", err)
+	}
+	return commModemStatus(bits), nil
 }
 
 // createFile opens name for reading and writing with CreateFile; tests

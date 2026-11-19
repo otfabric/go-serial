@@ -365,3 +365,63 @@ func TestOpenAddress(t *testing.T) {
 		t.Fatalf("Open of an address with NUL = %v, CreateFile(%q); want an error before CreateFile", err, names)
 	}
 }
+
+// TestNewDCBFlowControl: the DCB of each flow control, against the values
+// of the Win32 headers. XON/XOFF takes the driver's thresholds, or defaults
+// where it reports none.
+func TestNewDCBFlowControl(t *testing.T) {
+	flags := func(d c_DCB) uint32 {
+		return uint32(d.Pad_cgo_0[0]) | uint32(d.Pad_cgo_0[1])<<8 | uint32(d.Pad_cgo_0[2])<<16 | uint32(d.Pad_cgo_0[3])<<24
+	}
+	old := c_DCB{XonLim: 100, XoffLim: 40}
+	for _, tc := range []struct {
+		cfg   Config
+		flags uint32
+		xon   bool
+	}{
+		{Config{BaudRate: 19200, Parity: ParityEven}, 0x0003, false},
+		{Config{FlowControl: FlowRTSCTS}, 0x2005, false},
+		{Config{FlowControl: FlowDTRDSR}, 0x0029, false},
+		{Config{FlowControl: FlowXONXOFF}, 0x0301, true},
+	} {
+		d, err := newDCB(&tc.cfg, &old)
+		if err != nil {
+			t.Fatalf("%+v: %v", tc.cfg, err)
+		}
+		if got := flags(d); got != tc.flags {
+			t.Errorf("%+v: flags %#x; want %#x", tc.cfg, got, tc.flags)
+		}
+		if tc.xon != (d.XonChar == 0x11 && d.XoffChar == 0x13 && d.XonLim == 100 && d.XoffLim == 40) {
+			t.Errorf("%+v: XON/XOFF fields %+v", tc.cfg, d)
+		}
+	}
+	d, err := newDCB(&Config{FlowControl: FlowXONXOFF}, &c_DCB{})
+	if err != nil || d.XonLim != dcbDefaultXonLimit || d.XoffLim != dcbDefaultXoffLim {
+		t.Errorf("XON/XOFF without driver thresholds: %+v, %v", d, err)
+	}
+	if _, err := newDCB(&Config{FlowControl: "bogus"}, &old); !errors.Is(err, ErrInvalidConfig) {
+		t.Errorf("unknown flow control: %v", err)
+	}
+}
+
+// TestModemLinesClosedWindows: the modem-line methods of a closed port
+// return ErrClosed without a call to the driver, and a line that flow
+// control drives is refused.
+func TestModemLinesClosedWindows(t *testing.T) {
+	p := newPort()
+	p.lines = Config{FlowControl: FlowDTRDSR}
+	if err := p.SetDTR(true); !errors.Is(err, ErrLineInUse) {
+		t.Errorf("SetDTR under DTR/DSR: %v", err)
+	}
+	p.gate.shut(func() {}, time.Millisecond)
+	// ErrClosed comes first, also for a line that flow control drives.
+	if err := p.SetDTR(true); !errors.Is(err, ErrClosed) {
+		t.Errorf("SetDTR under DTR/DSR after Close: %v", err)
+	}
+	if err := p.SetRTS(true); !errors.Is(err, ErrClosed) {
+		t.Errorf("SetRTS after Close: %v", err)
+	}
+	if _, err := p.ModemStatus(); !errors.Is(err, ErrClosed) {
+		t.Errorf("ModemStatus after Close: %v", err)
+	}
+}

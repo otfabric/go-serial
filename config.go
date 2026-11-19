@@ -8,7 +8,8 @@ import (
 )
 
 // Config describes how a serial port should be opened and configured.
-// Zero-value policy: Open normalizes before use. BaudRate(0)→9600, DataBits(0)→8, StopBits(0)→1, Parity("")→none.
+// Zero-value policy: Open normalizes before use. BaudRate(0)→9600, DataBits(0)→8, StopBits(0)→1, Parity("")→none,
+// FlowControl("")→none.
 type Config struct {
 	// Device path (e.g. /dev/ttyUSB0 on Unix, COM1 on Windows). On POSIX
 	// systems Open fails unless the path is a character device.
@@ -32,14 +33,19 @@ type Config struct {
 	// Timeout for Read, and on Windows for Write as well. Zero (NoTimeout) =
 	// no deadline. See the package documentation.
 	Timeout time.Duration
+	// Flow control. Empty = none. FlowRTSCTS and FlowXONXOFF work on every
+	// platform; FlowDTRDSR on Windows only, and Open fails with
+	// ErrUnsupportedPlatform for it elsewhere. FlowRTSCTS with RS485.Enabled
+	// is invalid: RS-485 drives RTS.
+	FlowControl FlowControl
 	// RS-485 options. Ignored unless Enabled is true.
 	RS485 RS485Config
 	// VerifySettings makes Open read the settings back from the driver
 	// after setting them, and fail when the port did not take them: a
 	// *ConfigError wrapping ErrInvalidConfig names the field and what the
 	// port reports, and the port is closed. Compared are the speed, the
-	// data bits, the stop bits and the parity and, with RS485.Enabled, the
-	// two RS-485 delays. POSIX systems only; on Windows SetCommState
+	// data bits, the stop bits, the parity and the flow control and, with
+	// RS485.Enabled, the two RS-485 delays. POSIX systems only; on Windows SetCommState
 	// reports a setting the driver refuses as an error, and the field has
 	// no effect. A pseudo-terminal on Linux takes 8 data bits without
 	// parity whatever is asked: with VerifySettings, other data bits or a
@@ -84,7 +90,7 @@ func DefaultConfig(address string) Config {
 }
 
 // Validate checks the config for invalid or unsupported values. Root validation covers
-// address, data bits, stop bits, parity, timeout, and RS-485 delays. Unsupported baud
+// address, data bits, stop bits, parity, flow control, timeout, and RS-485 delays. Unsupported baud
 // is reported at Open (platform-specific). Returns a *ConfigError wrapping ErrInvalidConfig;
 // use errors.As(err, &cfgErr) to get Field, Value, and Reason.
 func (c Config) Validate() error {
@@ -101,6 +107,14 @@ func (c Config) Validate() error {
 	case "", ParityNone, ParityEven, ParityOdd:
 	default:
 		return &ConfigError{Field: "Parity", Value: c.Parity, Reason: "must be N, E, or O", Err: ErrInvalidConfig}
+	}
+	switch c.FlowControl {
+	case "", FlowNone, FlowRTSCTS, FlowDTRDSR, FlowXONXOFF:
+	default:
+		return &ConfigError{Field: "FlowControl", Value: c.FlowControl, Reason: "must be none, rts-cts, dtr-dsr or xon-xoff", Err: ErrInvalidConfig}
+	}
+	if c.FlowControl == FlowRTSCTS && c.RS485.Enabled {
+		return &ConfigError{Field: "FlowControl", Value: c.FlowControl, Reason: "RS-485 drives RTS", Err: ErrInvalidConfig}
 	}
 	if c.Timeout < 0 {
 		return &ConfigError{Field: "Timeout", Value: c.Timeout, Reason: "cannot be negative", Err: ErrInvalidConfig}
@@ -132,7 +146,7 @@ func ValidateConfig(c *Config) error {
 }
 
 // normalizeConfig returns a copy of c with zero values replaced by generic defaults:
-// BaudRate 0 → 9600, DataBits 0 → 8, StopBits 0 → 1, Parity "" → none.
+// BaudRate 0 → 9600, DataBits 0 → 8, StopBits 0 → 1, Parity "" → none, FlowControl "" → none.
 func normalizeConfig(c *Config) Config {
 	out := *c
 	if out.BaudRate == 0 {
@@ -147,11 +161,14 @@ func normalizeConfig(c *Config) Config {
 	if out.Parity == "" {
 		out.Parity = ParityNone
 	}
+	if out.FlowControl == "" {
+		out.FlowControl = FlowNone
+	}
 	return out
 }
 
 // Normalized returns a copy of c with zero-value fields replaced by generic defaults
-// (BaudRate 0→9600, DataBits 0→8, StopBits 0→1, Parity ""→none). Useful for logging
+// (BaudRate 0→9600, DataBits 0→8, StopBits 0→1, Parity ""→none, FlowControl ""→none). Useful for logging
 // effective config or validating after normalization. Open applies the same logic internally.
 //
 // Example:

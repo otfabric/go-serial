@@ -1,5 +1,42 @@
 # go-serial Releases
 
+## v0.6.0
+
+**Date:** 2026-11-19
+**Previous release:** v0.5.0
+
+## Summary
+
+Flow control and modem lines. `Config.FlowControl` sets RTS/CTS or XON/XOFF flow control on every platform and DTR/DSR on Windows; the port `Open` returns implements the new `ModemLines` interface, which sets DTR and RTS and reads CTS, DSR, RI and DCD. The API change is additive: one `Config` field, the `FlowControl` type, the `ModemLines` interface, `ModemStatus` and `ErrLineInUse`. `Port` is unchanged, so code that implements it keeps compiling.
+
+Contributed by @MatthewReed303 in [#18](https://github.com/otfabric/go-serial/pull/18). Thank you.
+
+## Changes
+
+### Added
+
+- `Config.FlowControl` (`FlowNone`, `FlowRTSCTS`, `FlowDTRDSR`, `FlowXONXOFF`) and `ParseFlowControl`. POSIX: `CRTSCTS`, or `IXON` and `IXOFF` with `VSTART` and `VSTOP` set to `XON` and `XOFF`; `FlowDTRDSR` fails `Open` with `ErrUnsupportedPlatform`. Windows: the DCB's handshake flags, or `fOutX` and `fInX` with the driver's XON and XOFF thresholds. `Validate` refuses `FlowRTSCTS` with `RS485.Enabled`, and `Config.VerifySettings` compares the flow control too.
+- `ModemLines` (`SetDTR`, `SetRTS`, `ModemStatus`) and `ModemStatus`, implemented by the port `Open` returns: `TIOCMBIS`, `TIOCMBIC` and `TIOCMGET` on POSIX systems, `EscapeCommFunction` and `GetCommModemStatus` on Windows.
+- `ErrLineInUse`: `SetRTS` under RTS/CTS flow control or RS-485, `SetDTR` under DTR/DSR flow control.
+- `XON` and `XOFF`.
+- `ExampleParseFlowControl` and `ExampleModemLines`.
+
+The `ModemLines` methods on a closed port return `ErrClosed`, also for a line that flow control or RS-485 drives. `Close` restores the flow control with the saved termios or DCB, but not the levels `SetDTR` and `SetRTS` set.
+
+### Documentation
+
+- The package documentation (concurrency of the `ModemLines` methods), README (features and the comparison table), API.md, ARCHITECTURE.md (the new files, the `ModemLines` methods under the close gate, what `Close` restores), ERRORS.md, LIMITATIONS.md (flow control and modem lines per platform, and what no test proves on hardware), SECURITY.md and TESTING.md.
+
+### Tests and CI
+
+- Every platform: `FlowControl` parsing, text and validation, and the Windows DCB flags, `EscapeCommFunction` functions and `GetCommModemStatus` bits against the Win32 header values.
+- POSIX: the flow-control termios bits and their read-back, `Open` with each flow control over a PTY, XON/XOFF holding output over a PTY until XON, and the modem-line ioctls against a replaced ioctl.
+- Windows: the DCB of each flow control, and the modem-line methods of a closed port.
+- Chaos: `TestChaosModemLinesDuringClose` (the modem-line methods from several goroutines during `Read`, `Write` and a racing `Close`); random configs and the termios restore now include the flow control.
+- Fuzz: `FuzzParseFlowControl`; the flow control in `FuzzTextRoundTrip`, `FuzzConfigValidate` and `FuzzTermiosAgreesWithValidate`.
+
+---
+
 ## v0.5.0
 
 **Date:** 2026-11-16

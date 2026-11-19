@@ -36,6 +36,12 @@ var (
 	// before or during the call. Use errors.Is(err, serial.ErrClosed) to
 	// detect.
 	ErrClosed = errors.New("serial: port closed")
+
+	// ErrLineInUse is returned by ModemLines.SetRTS while flow control on
+	// RTS and CTS or RS-485 drives RTS, and by ModemLines.SetDTR while flow
+	// control on DTR and DSR drives DTR. Use errors.Is(err,
+	// serial.ErrLineInUse) to detect.
+	ErrLineInUse = errors.New("serial: line driven by flow control or RS-485")
 )
 
 // timeoutError is the type of ErrTimeout.

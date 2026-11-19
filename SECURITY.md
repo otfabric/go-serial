@@ -6,9 +6,9 @@ go-serial is pre-1.0. Security fixes are released on the minor line of the lates
 
 | Version | Supported |
 |---------|-----------|
-| 0.5.x | Yes, from its first release |
-| 0.4.x | Yes, until v0.5.0 is released |
-| < 0.4 | No; upgrade to the latest release |
+| 0.6.x | Yes, from its first release |
+| 0.5.x | Yes, until v0.6.0 is released |
+| < 0.5 | No; upgrade to the latest release |
 
 ## Reporting a vulnerability
 
@@ -50,4 +50,4 @@ Every field of `Config` is taken as the choice of the application or of its oper
 
 - POSIX: `Write` has no deadline. With a device that stops taking output it returns only when `Close` is called from another goroutine.
 - POSIX: the device is not opened for exclusive use. Another process with permission on the device node can open the same port. Windows opens the port exclusively.
-- The library does not report line errors, and has no flow control and no modem line support ([LIMITATIONS.md](LIMITATIONS.md)).
+- The library does not report line errors ([LIMITATIONS.md](LIMITATIONS.md)).

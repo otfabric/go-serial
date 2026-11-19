@@ -267,6 +267,9 @@ func randomChaosConfig(r *rand.Rand, address string) Config {
 	if pick(10) {
 		c.Timeout = -time.Duration(1 + r.Intn(1000))
 	}
+	if pick(2) {
+		c.FlowControl = []FlowControl{"", FlowNone, FlowRTSCTS, FlowXONXOFF, FlowDTRDSR, "RTS-CTS", "rtscts"}[r.Intn(7)]
+	}
 	if pick(4) {
 		c.RS485 = RS485Config{
 			Enabled:            true,
@@ -306,6 +309,11 @@ func TestChaosRandomConfigs(t *testing.T) {
 			if !errors.Is(err, ErrInvalidConfig) {
 				t.Fatalf("%s: Validate=%v baudOK=%v but Open err=%v", desc, validErr, baudOK, err)
 			}
+		case cfg.FlowControl == FlowDTRDSR:
+			// Valid, but termios has no DTR/DSR handshake.
+			if !errors.Is(err, ErrUnsupportedPlatform) {
+				t.Fatalf("%s: DTR/DSR flow control: Open err=%v; want ErrUnsupportedPlatform", desc, err)
+			}
 		case cfg.Address != slave || cfg.RS485.Enabled:
 			// Wrong device or RS-485 on a pty: OS-level failure is fine,
 			// but it must be a real error, never a config error.
@@ -320,6 +328,14 @@ func TestChaosRandomConfigs(t *testing.T) {
 		if err == nil {
 			opened++
 			msg := randBytes(r, 1+r.Intn(64))
+			if cfg.FlowControl == FlowXONXOFF {
+				// The port takes XON and XOFF out of what it receives.
+				for i, c := range msg {
+					if c == XON || c == XOFF {
+						msg[i] = 'x'
+					}
+				}
+			}
 			if _, werr := master.Write(msg); werr != nil {
 				t.Fatalf("%s: master write: %v", desc, werr)
 			}
@@ -442,7 +458,9 @@ func TestChaosTermiosRestoredAfterAbuse(t *testing.T) {
 			DataBits: DataBits(5 + r.Intn(4)),
 			StopBits: StopBits(1 + r.Intn(2)),
 			Parity:   []Parity{ParityNone, ParityEven, ParityOdd}[r.Intn(3)],
-			Timeout:  time.Millisecond,
+			// Flow control too: Close must take CRTSCTS, IXON and IXOFF off.
+			FlowControl: []FlowControl{FlowNone, FlowRTSCTS, FlowXONXOFF}[r.Intn(3)],
+			Timeout:     time.Millisecond,
 		}
 		p, err := Open(&cfg)
 		if err != nil {

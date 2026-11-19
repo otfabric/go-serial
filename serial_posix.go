@@ -24,6 +24,10 @@ type port struct {
 
 	timeout time.Duration
 
+	// lines holds the flow control and RS-485 settings that decide whether
+	// SetRTS and SetDTR may drive their line.
+	lines Config
+
 	// mu guards closed, active and wake against Close. Read and Write
 	// register as active while they use fd; Close marks the port closed,
 	// wakes their waits through the wake pipe and closes fd only once no
@@ -159,6 +163,7 @@ func (p *port) open(c *Config) (err error) {
 		return fmt.Errorf("serial: open %s: %w", c.Address, err)
 	}
 	p.timeout = c.Timeout
+	p.lines = Config{FlowControl: c.FlowControl, RS485: RS485Config{Enabled: c.RS485.Enabled}}
 	return
 }
 
@@ -419,6 +424,21 @@ func newTermios(c *Config) (termios *syscall.Termios, err error) {
 		err = fmt.Errorf("serial: unsupported parity %q: %w", c.Parity, ErrInvalidConfig)
 		return
 	}
+	switch c.FlowControl {
+	case "", FlowNone:
+	case FlowRTSCTS:
+		termios.Cflag |= crtscts
+	case FlowXONXOFF:
+		termios.Iflag |= syscall.IXON | syscall.IXOFF
+		termios.Cc[syscall.VSTART] = XON
+		termios.Cc[syscall.VSTOP] = XOFF
+	case FlowDTRDSR:
+		err = fmt.Errorf("serial: flow control %s is supported on Windows only: %w", c.FlowControl, ErrUnsupportedPlatform)
+		return
+	default:
+		err = fmt.Errorf("serial: unsupported flow control %q: %w", c.FlowControl, ErrInvalidConfig)
+		return
+	}
 	// Control modes.
 	// CREAD: Enable receiver.
 	// CLOCAL: Ignore control lines.
@@ -529,9 +549,10 @@ func (p *port) checkTermios(c *Config, want *syscall.Termios) error {
 
 // compareTermios returns an error naming the first setting of c in which
 // got, the settings the port reports, differs from want, the settings open
-// set: the output speed, the character size, the stop bits or the parity.
-// Other flags are not compared. Parity is compared as none, even or odd, so
-// a PARODD bit without PARENB counts as no parity.
+// set: the output speed, the character size, the stop bits, the parity or
+// the flow control. Other flags are not compared. Parity is compared as
+// none, even or odd, so a PARODD bit without PARENB counts as no parity;
+// flow control as none, RTS/CTS or XON/XOFF.
 func compareTermios(c *Config, want, got *syscall.Termios) error {
 	if s := termiosSpeed(got); s != termiosSpeed(want) {
 		return notApplied("BaudRate", c.BaudRate, speedName(s))
@@ -549,7 +570,22 @@ func compareTermios(c *Config, want, got *syscall.Termios) error {
 	if parity := termiosParity(got); parity != termiosParity(want) {
 		return notApplied("Parity", c.Parity, "parity "+parity.String())
 	}
+	if flow := termiosFlow(got); flow != termiosFlow(want) {
+		return notApplied("FlowControl", c.FlowControl, "flow control "+flow.String())
+	}
 	return nil
+}
+
+// termiosFlow returns the flow control that t sets: RTS/CTS when every
+// CRTSCTS bit is set, XON/XOFF when IXON and IXOFF are, else none.
+func termiosFlow(t *syscall.Termios) FlowControl {
+	switch {
+	case t.Cflag&crtscts == crtscts:
+		return FlowRTSCTS
+	case t.Iflag&(syscall.IXON|syscall.IXOFF) == syscall.IXON|syscall.IXOFF:
+		return FlowXONXOFF
+	}
+	return FlowNone
 }
 
 // speedName returns the rate of a speed code of this platform, or the code.

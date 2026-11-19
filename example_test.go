@@ -83,3 +83,43 @@ func ExampleErrTimeout() {
 	// Output:
 	// timeout
 }
+
+// ExampleParseFlowControl shows parsing a flow control (e.g. from a CLI flag).
+func ExampleParseFlowControl() {
+	f, err := ParseFlowControl("RTS-CTS")
+	if err != nil {
+		fmt.Println("error:", err)
+		return
+	}
+	fmt.Println(f)
+	// Output: rts-cts
+}
+
+// ExampleModemLines shows driving DTR and reading the modem status inputs of
+// an open port. It needs a serial device, so it is compiled but not run.
+func ExampleModemLines() {
+	p, err := Open(&Config{Address: "/dev/ttyUSB0", FlowControl: FlowRTSCTS})
+	if err != nil {
+		fmt.Println("error:", err)
+		return
+	}
+	defer func() { _ = p.Close() }()
+	lines, ok := p.(ModemLines)
+	if !ok {
+		return
+	}
+	if err := lines.SetDTR(true); err != nil {
+		fmt.Println("error:", err)
+		return
+	}
+	// RTS belongs to the RTS/CTS handshake here.
+	if err := lines.SetRTS(true); errors.Is(err, ErrLineInUse) {
+		fmt.Println("RTS is driven by flow control")
+	}
+	st, err := lines.ModemStatus()
+	if err != nil {
+		fmt.Println("error:", err)
+		return
+	}
+	fmt.Println("CTS:", st.CTS, "DCD:", st.DCD)
+}

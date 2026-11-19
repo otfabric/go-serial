@@ -28,7 +28,9 @@ example (demo)      modbus (presets)      callers such as go-modbus
 
 | File | Build constraint | Contents |
 |---|---|---|
-| `serial_posix.go` | darwin, linux, freebsd, openbsd, netbsd | `port`, `Open` path, `Read`, `Write`, `Close`, `newTermios`, RS-485 ioctl |
+| `serial_posix.go` | darwin, linux, freebsd, openbsd, netbsd | `port`, `Open` path, `Read`, `Write`, `Close`, `newTermios` (including the flow-control bits), RS-485 ioctl |
+| `modem_posix.go` | darwin, linux, freebsd, openbsd, netbsd | `ModemLines` of the POSIX `port`: `TIOCMBIS`, `TIOCMBIC`, `TIOCMGET` through the `modemIoctl` variable, which tests replace |
+| `flow_linux.go`, `flow_ccts.go`, `flow_crtscts.go` | linux; darwin, freebsd; netbsd, openbsd | The `CRTSCTS` value of each system, which the `syscall` package does not export |
 | `serial_linux.go`, `serial_darwin.go`, `serial_bsd.go`, `serial_openbsd.go` | per OS | Baud rate and character size tables, `tcsetattr`, `tcgetattr` |
 | `termios_*.go` | per OS and architecture | Input and output speed fields of `Termios`, Linux MIPS separately |
 | `wait_posix.go` | POSIX | `waitFD`: deadline loop that retries `EINTR` |
@@ -38,6 +40,8 @@ example (demo)      modbus (presets)      callers such as go-modbus
 | `write_chunks.go` | none | The loop of the Windows `Write`. It has no build constraint so that its tests run on every platform; the POSIX backend does not call it |
 | `io_gate.go` | none | `ioGate`, the count of active calls of the Windows `port` and the cancel loop of its `Close`. No build constraint, for the same reason |
 | `device_name.go` | none | `windowsDeviceName`, the address check of the Windows `Open`. No build constraint, for the same reason |
+| `flow.go` | none | `FlowControl`, `ModemLines`, `ModemStatus`, and `lineInUse`, the check both backends make before `SetRTS` and `SetDTR` |
+| `commflags.go` | none | The DCB bit field, `EscapeCommFunction` functions and `GetCommModemStatus` bits of the Windows backend. No build constraint, so that the mapping is tested on every platform |
 | `zsyscall_windows.go`, `ztypes_windows.go` | windows | Generated from `syscall_windows.go` and `types_windows.go` by [generate.bat](generate.bat); `zsyscall_windows.go` also carries a hand edit noted in its header |
 
 On an operating system without a backend, `openPort` stays nil and `Open` returns `ErrUnsupportedPlatform`.
@@ -66,13 +70,15 @@ Production code starts no goroutines. A blocking `Read` or `Write` runs on the c
 
 Each port has one mutex, and nothing is called while it is held except the system calls of `Close`:
 
-- POSIX: the mutex guards `closed`, the count of active calls and the wake pipe. `Read` and `Write` register under it (`begin`), use the descriptor without it, and unregister (`end`). `Close` sets `closed`, writes to the wake pipe, waits on a condition variable until no call is active, and only then restores termios and closes the descriptor and the pipe. So a descriptor number is never used after it was closed. A second `Close` returns nil at once, also while the first one waits.
-- Windows: the mutex of `ioGate` guards `closed` and the count of active calls. `Read` and `Write` register under it (`begin`), use the handle without it, and unregister (`end`). `Close` sets `closed`, cancels until no call is active, and only then restores the DCB and timeouts and closes the handle. A second `Close` returns nil at once, also while the first one waits.
+- POSIX: the mutex guards `closed`, the count of active calls and the wake pipe. `Read`, `Write` and the `ModemLines` methods register under it (`begin`), use the descriptor without it, and unregister (`end`). `Close` sets `closed`, writes to the wake pipe, waits on a condition variable until no call is active, and only then restores termios and closes the descriptor and the pipe. So a descriptor number is never used after it was closed. A second `Close` returns nil at once, also while the first one waits.
+- Windows: the mutex of `ioGate` guards `closed` and the count of active calls. `Read`, `Write` and the `ModemLines` methods register under it (`begin`), use the handle without it, and unregister (`end`). `Close` sets `closed`, cancels until no call is active, and only then restores the DCB and timeouts and closes the handle. A second `Close` returns nil at once, also while the first one waits.
 
-`Open` works on a normalized copy of `Config`, so the caller may change its `Config` afterwards. The caller owns the `Port`. The contract for concurrent use is in the [package documentation](serial.go): one `Read` and one `Write` at a time. `Close` may run during either and cancels it.
+`Open` works on a normalized copy of `Config`, so the caller may change its `Config` afterwards. The caller owns the `Port`. The contract for concurrent use is in the [package documentation](serial.go): one `Read` and one `Write` at a time, and the `ModemLines` methods from any goroutine. `Close` may run during any of them: it cancels a `Read` or `Write` and waits for every call to return.
 
 The POSIX `port` has an unexported `hook` field for tests, nil otherwise: `Read` and `Write` call it before each wait and before they unregister, so a test can hold a call at that point without sleeping ([TESTING.md](TESTING.md#lifecycle-contract-tests)).
 
 ## State saved and restored
 
-`open` saves the current termios (POSIX) or DCB and timeouts (Windows), and `Close` restores them before closing. On POSIX, failure to read the current termios is tolerated and nothing is restored. With `Config.VerifySettings`, POSIX `open` reads termios back after setting it and compares the speed, character size, stop bits and parity, and on Linux reads the RS-485 settings back with `TIOCGRS485` after `TIOCSRS485` and compares the two delays; a difference fails `open` with a `*ConfigError`, after it restored the saved termios and closed the descriptor. If setup fails part-way, `open` closes the descriptor or handle before returning the error.
+`open` saves the current termios (POSIX) or DCB and timeouts (Windows), and `Close` restores them before closing. On POSIX, failure to read the current termios is tolerated and nothing is restored. With `Config.VerifySettings`, POSIX `open` reads termios back after setting it and compares the speed, character size, stop bits, parity and flow control, and on Linux reads the RS-485 settings back with `TIOCGRS485` after `TIOCSRS485` and compares the two delays; a difference fails `open` with a `*ConfigError`, after it restored the saved termios and closed the descriptor. If setup fails part-way, `open` closes the descriptor or handle before returning the error.
+
+The levels that `SetDTR` and `SetRTS` set are not saved or restored. On Windows, restoring the saved DCB sets DTR and RTS as its `fDtrControl` and `fRtsControl` say; on POSIX the lines stay as the driver leaves them when the descriptor closes.

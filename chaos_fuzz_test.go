@@ -33,11 +33,42 @@ func FuzzParseParity(f *testing.F) {
 	})
 }
 
+// FuzzParseFlowControl: never panics; accepted input maps to a valid
+// constant whose text form parses back to itself, and anything else is
+// refused with ErrInvalidConfig.
+func FuzzParseFlowControl(f *testing.F) {
+	for _, s := range []string{"", "none", "NONE", "rts-cts", "RTS-CTS", "dtr-dsr", "xon-xoff", "Xon-Xoff", "rtscts", "hardware", "\x00", "rts-cts\x00", "ı"} {
+		f.Add(s)
+	}
+	f.Fuzz(func(t *testing.T, s string) {
+		fc, err := ParseFlowControl(s)
+		if err != nil {
+			if !errors.Is(err, ErrInvalidConfig) {
+				t.Fatalf("ParseFlowControl(%q) error %v does not wrap ErrInvalidConfig", s, err)
+			}
+			return
+		}
+		switch fc {
+		case FlowNone, FlowRTSCTS, FlowDTRDSR, FlowXONXOFF:
+		default:
+			t.Fatalf("ParseFlowControl(%q) = %q, not a known constant", s, fc)
+		}
+		if err := (Config{Address: "x", FlowControl: fc}).Validate(); err != nil {
+			t.Fatalf("ParseFlowControl(%q) = %q, which Validate refuses: %v", s, fc, err)
+		}
+		var back FlowControl
+		text, _ := fc.MarshalText()
+		if err := back.UnmarshalText(text); err != nil || back != fc {
+			t.Fatalf("round trip of %q: got %q, %v", fc, back, err)
+		}
+	})
+}
+
 // FuzzTextRoundTrip: for every config type, UnmarshalText either rejects
 // input with ErrInvalidConfig or yields a value that marshals back to text
 // which unmarshals to the same value.
 func FuzzTextRoundTrip(f *testing.F) {
-	for _, s := range []string{"", "0", "1", "2", "5", "8", "9", "9600", "-1", "+8", "08", " 8", "1e3", "99999999999999999999", "N", "E"} {
+	for _, s := range []string{"", "0", "1", "2", "5", "8", "9", "9600", "-1", "+8", "08", " 8", "1e3", "99999999999999999999", "N", "E", "none", "rts-cts", "XON-XOFF"} {
 		f.Add(s)
 	}
 	f.Fuzz(func(t *testing.T, s string) {
@@ -97,6 +128,15 @@ func FuzzTextRoundTrip(f *testing.F) {
 			}
 			return nil
 		})
+		var fc FlowControl
+		check("FlowControl", fc.UnmarshalText, func() error {
+			txt, _ := fc.MarshalText()
+			var e FlowControl
+			if err := e.UnmarshalText(txt); err != nil || e != fc {
+				return errors.New("mismatch")
+			}
+			return nil
+		})
 	})
 }
 
@@ -104,13 +144,15 @@ func FuzzTextRoundTrip(f *testing.F) {
 // *ConfigError wrapping ErrInvalidConfig, and normalizing a valid config
 // keeps it valid and fills every defaulted field.
 func FuzzConfigValidate(f *testing.F) {
-	f.Add("/dev/ttyS0", 9600, uint8(8), uint8(1), "N", int64(0), false, int64(0), int64(0))
-	f.Add("", 0, uint8(0), uint8(0), "", int64(-1), true, int64(-5), int64(3))
-	f.Add("COM3", -1, uint8(9), uint8(3), "M", int64(time.Second), true, int64(1), int64(-1))
-	f.Fuzz(func(t *testing.T, addr string, baud int, data, stop uint8, parity string, timeout int64, rs485 bool, before, after int64) {
+	f.Add("/dev/ttyS0", 9600, uint8(8), uint8(1), "N", "", int64(0), false, int64(0), int64(0))
+	f.Add("", 0, uint8(0), uint8(0), "", "none", int64(-1), true, int64(-5), int64(3))
+	f.Add("COM3", -1, uint8(9), uint8(3), "M", "RTS-CTS", int64(time.Second), true, int64(1), int64(-1))
+	f.Add("/dev/ttyS0", 19200, uint8(8), uint8(1), "E", "rts-cts", int64(0), true, int64(0), int64(0))
+	f.Add("/dev/ttyS0", 19200, uint8(8), uint8(1), "E", "xon-xoff", int64(0), true, int64(0), int64(0))
+	f.Fuzz(func(t *testing.T, addr string, baud int, data, stop uint8, parity, flow string, timeout int64, rs485 bool, before, after int64) {
 		c := Config{
 			Address: addr, BaudRate: BaudRate(baud), DataBits: DataBits(data), StopBits: StopBits(stop),
-			Parity: Parity(parity), Timeout: time.Duration(timeout),
+			Parity: Parity(parity), FlowControl: FlowControl(flow), Timeout: time.Duration(timeout),
 			RS485: RS485Config{Enabled: rs485, DelayRtsBeforeSend: time.Duration(before), DelayRtsAfterSend: time.Duration(after)},
 		}
 		err := c.Validate()
@@ -125,7 +167,10 @@ func FuzzConfigValidate(f *testing.F) {
 		if err := n.Validate(); err != nil {
 			t.Fatalf("normalized valid config became invalid: %v", err)
 		}
-		if n.DataBits == 0 || n.StopBits == 0 || n.Parity == "" || (c.BaudRate == 0 && n.BaudRate == 0) {
+		if c.FlowControl == FlowRTSCTS && c.RS485.Enabled {
+			t.Fatalf("Validate accepted RTS/CTS flow control with RS-485: %+v", c)
+		}
+		if n.DataBits == 0 || n.StopBits == 0 || n.Parity == "" || n.FlowControl == "" || (c.BaudRate == 0 && n.BaudRate == 0) {
 			t.Fatalf("Normalized left defaults unset: %+v", n)
 		}
 	})

@@ -5,7 +5,7 @@ Nothing in this library is certified. The README's comparison and feature statem
 ## Not implemented
 
 - Port enumeration and USB metadata.
-- Modem control lines (DTR, RTS, CTS and status bits) and hardware or software flow control settings.
+- Waiting for a change of a modem status line (`TIOCMIWAIT`, `WaitCommEvent`): `ModemStatus` reads the lines when called.
 - Break signals, buffer flush and drain.
 - Per-call deadlines and a `context` API. `Close` cancels I/O in progress: see the [package documentation](serial.go).
 - Line error reporting. A received parity or framing error, or a break, is not reported by `Read`: POSIX delivers such a byte as `0x00`, Windows as the received value. Protocols with a checksum (Modbus RTU CRC) detect the corruption.
@@ -30,6 +30,8 @@ What is tested on each platform, and what is only built, is in the [README](READ
 | Concurrent `Read` and `Write` | Independent | Same | Same | Same | One synchronous handle: a `Write` may wait for a pending `Read` |
 | `Close` during `Read`/`Write` | Cancels them with `ErrClosed` | Same | Same | Same | Cancels them with `CancelIoEx`; they return `ErrClosed` |
 | `Config.VerifySettings` | Reads termios and the RS-485 delays back. A pseudo-terminal sets 8 data bits and no parity whatever it is given, so `Open` fails there for other data bits or a parity | Reads termios back | Same as macOS | Same as macOS | No effect |
+| `Config.FlowControl` | `rts-cts` (`CRTSCTS`), `xon-xoff`; `dtr-dsr` fails with `ErrUnsupportedPlatform` | Same | Same | Same | `rts-cts`, `dtr-dsr`, `xon-xoff` in the DCB |
+| `ModemLines` | `TIOCMBIS`, `TIOCMBIC`, `TIOCMGET`; a pseudo-terminal has no modem lines and returns `ENOTTY` | The same ioctls | Same | Same | `EscapeCommFunction`, `GetCommModemStatus`; on the one synchronous handle a call may wait for a pending `Read` |
 
 - `ErrTimeout` comes from `Read` on every platform and from `Write` on Windows only: the POSIX `Write` has no deadline. After a `Write` that returned `ErrTimeout`, `n` bytes were handed to the driver and the rest were not; the library does not retry.
 - **RS-485.** Linux only: `Open` sends `TIOCSRS485` (with the MIPS request number on MIPS) and fails if the driver refuses it. A driver may change the delays it was given; with `Config.VerifySettings`, `Open` reads them back with `TIOCGRS485` and fails when they differ. On macOS and the BSDs `Open` with `Config.RS485.Enabled` fails with `ErrUnsupportedPlatform`. The Windows backend ignores `Config.RS485` without an error. Delays are truncated to milliseconds.
@@ -40,6 +42,8 @@ What is tested on each platform, and what is only built, is in the [README](READ
 go-serial gives no real-time guarantee. Timeouts are bounded by the operating system's scheduler and driver. A timeout is not an inter-character timer, so a protocol that needs one (Modbus RTU framing, for example) must implement it above this library, within the accuracy the host allows.
 
 ## Not verified
+
+- **Flow control and modem lines on hardware.** Over a Linux pseudo-terminal the tests prove that `Open` sets `CRTSCTS` and `IXON`/`IXOFF` and reads them back, and that an XOFF from the other end holds output until an XON. That RTS/CTS stops a real UART, and every mapping of `SetDTR`, `SetRTS` and `ModemStatus` to a line, are tested only against a replaced ioctl: a pseudo-terminal has no modem lines. On Windows the DCB flags, the `EscapeCommFunction` functions and the `GetCommModemStatus` bits are tested against the values of the Win32 headers; no test calls the driver.
 
 - **No physical hardware.** No test uses a real UART, USB adapter or RS-485 transceiver. Baud rate, parity and stop bits are not observed on a line.
 - **RS-485 driver behaviour.** Tests cover validation, the refusal on a PTY and the read-back against a replaced ioctl, never an accepted ioctl of a driver.

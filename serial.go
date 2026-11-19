@@ -16,7 +16,10 @@ One Read and one Write may run concurrently on the same Port (full-duplex).
 Do not run multiple concurrent Readers or Writers. On Windows the port is a
 synchronous handle, so a Write issued while a Read waits may wait for that
 Read to return; use a finite Timeout there when reading and writing from
-separate goroutines.
+separate goroutines. The ModemLines methods may be called from any goroutine,
+also while a Read or Write runs; on Windows such a call may likewise wait for
+a pending Read. Close waits for them as it does for Read and Write, and they
+return ErrClosed after Close.
 
 # Timeouts and Close
 
@@ -38,6 +41,10 @@ Windows the cancel is CancelIoEx on the port's handle.
 On Windows Config.Address must be a device name such as COM3 or \\.\COM10;
 see Config.Address and Config.UncheckedAddress. Config.VerifySettings makes
 Open on POSIX systems check that the port took the settings.
+
+Config.FlowControl sets RTS/CTS or XON/XOFF flow control, and DTR/DSR on
+Windows. The port Open returns also implements ModemLines: SetDTR and SetRTS
+drive the modem control outputs and ModemStatus reads CTS, DSR, RI and DCD.
 
 On POSIX systems Read follows the io.Reader contract when the line goes
 away: it returns n == 0 with io.EOF once the other end hung up (an

@@ -14,7 +14,7 @@ Open copies and normalizes Config; the caller owns the returned Port and must Cl
 
 #### Concurrency {#hdr-Concurrency}
 
-One Read and one Write may run concurrently on the same Port (full-duplex). Do not run multiple concurrent Readers or Writers. On Windows the port is a synchronous handle, so a Write issued while a Read waits may wait for that Read to return; use a finite Timeout there when reading and writing from separate goroutines.
+One Read and one Write may run concurrently on the same Port (full-duplex). Do not run multiple concurrent Readers or Writers. On Windows the port is a synchronous handle, so a Write issued while a Read waits may wait for that Read to return; use a finite Timeout there when reading and writing from separate goroutines. The ModemLines methods may be called from any goroutine, also while a Read or Write runs; on Windows such a call may likewise wait for a pending Read. Close waits for them as it does for Read and Write, and they return ErrClosed after Close.
 
 #### Timeouts and Close {#hdr-Timeouts_and_Close}
 
@@ -24,9 +24,20 @@ Close restores prior termios/DCB settings when possible, then closes the fd/hand
 
 On Windows Config.Address must be a device name such as COM3 or \\\\.\\COM10; see Config.Address and Config.UncheckedAddress. Config.VerifySettings makes Open on POSIX systems check that the port took the settings.
 
+Config.FlowControl sets RTS/CTS or XON/XOFF flow control, and DTR/DSR on Windows. The port Open returns also implements ModemLines: SetDTR and SetRTS drive the modem control outputs and ModemStatus reads CTS, DSR, RI and DCD.
+
 On POSIX systems Read follows the io.Reader contract when the line goes away: it returns n == 0 with io.EOF once the other end hung up (an unplugged USB adapter, a closed pseudo-terminal) or with the OS error (for example EIO), never a negative count.
 
 ## Constants
+
+```go
+const (
+	XON  byte = 0x11
+	XOFF byte = 0x13
+)
+```
+
+XON and XOFF are the characters of software flow control (DC1 and DC3).
 
 ```go
 const MaxRS485Delay = time.Duration(math.MaxUint32) * time.Millisecond
@@ -70,6 +81,12 @@ var (
 	// before or during the call. Use errors.Is(err, serial.ErrClosed) to
 	// detect.
 	ErrClosed = errors.New("serial: port closed")
+
+	// ErrLineInUse is returned by ModemLines.SetRTS while flow control on
+	// RTS and CTS or RS-485 drives RTS, and by ModemLines.SetDTR while flow
+	// control on DTR and DSR drives DTR. Use errors.Is(err,
+	// serial.ErrLineInUse) to detect.
+	ErrLineInUse = errors.New("serial: line driven by flow control or RS-485")
 )
 ```
 
@@ -196,14 +213,19 @@ type Config struct {
 	// Timeout for Read, and on Windows for Write as well. Zero (NoTimeout) =
 	// no deadline. See the package documentation.
 	Timeout time.Duration
+	// Flow control. Empty = none. FlowRTSCTS and FlowXONXOFF work on every
+	// platform; FlowDTRDSR on Windows only, and Open fails with
+	// ErrUnsupportedPlatform for it elsewhere. FlowRTSCTS with RS485.Enabled
+	// is invalid: RS-485 drives RTS.
+	FlowControl FlowControl
 	// RS-485 options. Ignored unless Enabled is true.
 	RS485 RS485Config
 	// VerifySettings makes Open read the settings back from the driver
 	// after setting them, and fail when the port did not take them: a
 	// *ConfigError wrapping ErrInvalidConfig names the field and what the
 	// port reports, and the port is closed. Compared are the speed, the
-	// data bits, the stop bits and the parity and, with RS485.Enabled, the
-	// two RS-485 delays. POSIX systems only; on Windows SetCommState
+	// data bits, the stop bits, the parity and the flow control and, with
+	// RS485.Enabled, the two RS-485 delays. POSIX systems only; on Windows SetCommState
 	// reports a setting the driver refuses as an error, and the field has
 	// no effect. A pseudo-terminal on Linux takes 8 data bits without
 	// parity whatever is asked: with VerifySettings, other data bits or a
@@ -219,7 +241,7 @@ type Config struct {
 }
 ```
 
-Config describes how a serial port should be opened and configured. Zero-value policy: Open normalizes before use. BaudRate(0)→9600, DataBits(0)→8, StopBits(0)→1, Parity("")→none.
+Config describes how a serial port should be opened and configured. Zero-value policy: Open normalizes before use. BaudRate(0)→9600, DataBits(0)→8, StopBits(0)→1, Parity("")→none, FlowControl("")→none.
 
 #### func DefaultConfig
 
@@ -235,7 +257,7 @@ DefaultConfig returns a generic serial config for the given address (9600 8N1). 
 func (c Config) Normalized() Config
 ```
 
-Normalized returns a copy of c with zero-value fields replaced by generic defaults (BaudRate 0→9600, DataBits 0→8, StopBits 0→1, Parity ""→none). Useful for logging effective config or validating after normalization. Open applies the same logic internally.
+Normalized returns a copy of c with zero-value fields replaced by generic defaults (BaudRate 0→9600, DataBits 0→8, StopBits 0→1, Parity ""→none, FlowControl ""→none). Useful for logging effective config or validating after normalization. Open applies the same logic internally.
 
 Example:
 
@@ -249,7 +271,7 @@ Example:
 func (c Config) Validate() error
 ```
 
-Validate checks the config for invalid or unsupported values. Root validation covers address, data bits, stop bits, parity, timeout, and RS-485 delays. Unsupported baud is reported at Open (platform-specific). Returns a \*ConfigError wrapping ErrInvalidConfig; use errors.As(err, &cfgErr) to get Field, Value, and Reason.
+Validate checks the config for invalid or unsupported values. Root validation covers address, data bits, stop bits, parity, flow control, timeout, and RS-485 delays. Unsupported baud is reported at Open (platform-specific). Returns a \*ConfigError wrapping ErrInvalidConfig; use errors.As(err, &cfgErr) to get Field, Value, and Reason.
 
 ### type ConfigError
 
@@ -324,6 +346,89 @@ func (d *DataBits) UnmarshalText(text []byte) error
 ```
 
 UnmarshalText implements encoding.TextUnmarshaler. Accepts "5", "6", "7", "8".
+
+### type FlowControl
+
+```go
+type FlowControl string
+```
+
+FlowControl is the flow control of a port. Use the constants or ParseFlowControl when setting Config.FlowControl.
+
+```go
+const (
+	FlowNone    FlowControl = "none"     // No flow control
+	FlowRTSCTS  FlowControl = "rts-cts"  // Hardware flow control on RTS and CTS
+	FlowDTRDSR  FlowControl = "dtr-dsr"  // Hardware flow control on DTR and DSR (Windows only)
+	FlowXONXOFF FlowControl = "xon-xoff" // Software flow control with XON (0x11) and XOFF (0x13)
+)
+```
+
+#### func ParseFlowControl
+
+```go
+func ParseFlowControl(s string) (FlowControl, error)
+```
+
+ParseFlowControl converts a string (e.g. from a CLI flag) to FlowControl. Accepts "none", "rts-cts", "dtr-dsr" and "xon-xoff" (case-insensitive). Empty string returns FlowNone. Returns an error wrapping ErrInvalidConfig for other input.
+
+#### func (FlowControl) MarshalText
+
+```go
+func (f FlowControl) MarshalText() ([]byte, error)
+```
+
+MarshalText implements encoding.TextMarshaler.
+
+#### func (FlowControl) String
+
+```go
+func (f FlowControl) String() string
+```
+
+String returns the flow control's name ("none", "rts-cts", "dtr-dsr", "xon-xoff").
+
+#### func (FlowControl) UnmarshalText
+
+```go
+func (f *FlowControl) UnmarshalText(text []byte) error
+```
+
+UnmarshalText implements encoding.TextUnmarshaler. Accepts what ParseFlowControl accepts.
+
+### type ModemLines
+
+```go
+type ModemLines interface {
+	// SetDTR asserts (true) or clears (false) Data Terminal Ready.
+	SetDTR(on bool) error
+	// SetRTS asserts (true) or clears (false) Request To Send.
+	SetRTS(on bool) error
+	// ModemStatus reads CTS, DSR, RI and DCD.
+	ModemStatus() (ModemStatus, error)
+}
+```
+
+ModemLines sets a port's modem control outputs and reads its modem status inputs. Every Port that Open returns on Linux, macOS, the BSDs and Windows implements it:
+
+	if m, ok := p.(serial.ModemLines); ok {
+		err = m.SetDTR(true)
+	}
+
+A method on a closed port returns ErrClosed. SetRTS returns ErrLineInUse while Config.FlowControl is FlowRTSCTS or Config.RS485 is enabled, and SetDTR while Config.FlowControl is FlowDTRDSR: the driver drives that line then. A port without modem lines, such as a pseudo-terminal, returns the operating system's error, wrapped with the operation.
+
+### type ModemStatus
+
+```go
+type ModemStatus struct {
+	CTS bool // Clear To Send
+	DSR bool // Data Set Ready
+	RI  bool // Ring Indicator
+	DCD bool // Data Carrier Detect
+}
+```
+
+ModemStatus is the state of a port's modem status inputs: true is asserted.
 
 ### type Parity
 
